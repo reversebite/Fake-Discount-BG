@@ -51,6 +51,31 @@
   // Visible-DOM was-price (only present on discounted items, populated by
   // jQuery after `load`). The element exists on every page but holds `0.00`
   // when there's no discount; we only use it when > 0 and > current.
+  // CloudCart exposes list/sale in inline `cc_page_data = {...}` — not a page
+  // global; MV3 content scripts cannot read `typeof cc_page_data`.
+  function parseCcPageDataFromScript() {
+    for (const s of document.querySelectorAll('script:not([src])')) {
+      const text = s.textContent || '';
+      const m = text.match(/cc_page_data\s*=\s*(\{[\s\S]*?\})\s*;/);
+      if (!m) continue;
+      try {
+        const data = JSON.parse(m[1]);
+        if (data && data.price != null) return data;
+      } catch (_) { /* skip malformed */ }
+    }
+    return null;
+  }
+
+  function readCcPageDataWasPrice(currentPrice) {
+    const cc = parseCcPageDataFromScript();
+    if (!cc) return null;
+    const list = parseFloat(cc.price);
+    const sale = parseFloat(cc.discount_price);
+    if (!Number.isFinite(list) || !Number.isFinite(sale) || list <= sale) return null;
+    if (currentPrice && Math.abs(currentPrice - sale) > 0.02) return null;
+    return Math.round(list * 100) / 100;
+  }
+
   function readVisibleOldPrice(currentPrice) {
     const el = document.querySelector('._product-details-price-old.price-old-js, .price-old-js');
     if (!el) return null;
@@ -97,9 +122,9 @@
         price = null;
       }
 
-      // Original price — read after hydration; only used when actually
-      // discounted (the placeholder shows 0.00 on full-price products).
-      const originalPrice = readVisibleOldPrice(price);
+      // Original price — cc_page_data first (pre-hydration), then DOM.
+      let originalPrice = readCcPageDataWasPrice(price);
+      if (originalPrice == null) originalPrice = readVisibleOldPrice(price);
       const discount = originalPrice ? ProductParser.calculateDiscount(originalPrice, price) : null;
 
       // Thumbnail — server-rendered microdata image.
@@ -126,6 +151,20 @@
       if (loadbeeEl) {
         const candidate = (loadbeeEl.getAttribute('data-loadbee-gtin') || '').trim().replace(/^0+(?=\d{8,14}$)/, '');
         if (ProductParser.validateGTIN(candidate)) ean = candidate;
+      }
+      if (!ean) {
+        const cc = parseCcPageDataFromScript();
+        if (cc && cc.barcode != null) {
+          const candidate = String(cc.barcode).trim().replace(/^0+(?=\d{8,14}$)/, '');
+          if (ProductParser.validateGTIN(candidate)) ean = candidate;
+        }
+      }
+      if (!ean) {
+        const flixEl = document.querySelector('[data-flix-ean]');
+        if (flixEl) {
+          const candidate = (flixEl.getAttribute('data-flix-ean') || '').trim().replace(/^0+(?=\d{8,14}$)/, '');
+          if (ProductParser.validateGTIN(candidate)) ean = candidate;
+        }
       }
       if (!ean) ean = ProductParser.extractEAN(document);
 
@@ -189,10 +228,10 @@
   }
 
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enableZora' });
   }
 
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
 
   await new Promise(resolve => {
     if (document.readyState === 'complete') resolve();

@@ -24,6 +24,68 @@
     return m ? ProductParser.parsePrice(m[1]) : null;
   }
 
+  function getSelectedSizeToken(mainCard) {
+    if (mainCard) {
+      const selected = mainCard.querySelector(
+        '[data-test*="size"][aria-selected="true"], [data-test*="size"][aria-pressed="true"], ' +
+        '[data-test*="Size"][aria-selected="true"], [data-test*="sizeOption"][aria-checked="true"], ' +
+        'button[aria-pressed="true"][data-test*="size"], input[type="radio"][name*="size"]:checked'
+      );
+      if (selected) {
+        const token = (selected.getAttribute('data-size') || selected.textContent || '').trim();
+        if (token) return token;
+      }
+    }
+    const params = new URLSearchParams(window.location.search);
+    for (const key of ['size', 'variant', 'sku']) {
+      const v = params.get(key);
+      if (v) return v.trim();
+    }
+    return null;
+  }
+
+  function extractAnswearVariantEAN(mainCard) {
+    const selectedSize = getSelectedSizeToken(mainCard);
+    const productIdMatch = window.location.pathname.match(/-(\d{4,})(?:[/?#]|$)/);
+    const productId = productIdMatch ? productIdMatch[1] : null;
+    const html = document.documentElement.innerHTML;
+    const eanPattern = /"ean"\s*:\s*"(\d{8,14})"/g;
+    const candidates = [];
+    let match;
+    while ((match = eanPattern.exec(html)) !== null) {
+      const ean = match[1];
+      if (!ProductParser.validateGTIN(ean)) continue;
+      const start = Math.max(0, match.index - 500);
+      candidates.push({ ean, context: html.slice(start, match.index + 100) });
+    }
+    if (candidates.length === 0) return null;
+    if (candidates.length === 1) return candidates[0].ean;
+
+    if (selectedSize) {
+      const sizeEsc = selectedSize.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      for (const { ean, context } of candidates) {
+        if (new RegExp(`"size"\\s*:\\s*"${sizeEsc}"`, 'i').test(context) ||
+            new RegExp(`"sizeName"\\s*:\\s*"${sizeEsc}"`, 'i').test(context) ||
+            new RegExp(`"name"\\s*:\\s*"${sizeEsc}"`, 'i').test(context)) {
+          return ean;
+        }
+      }
+    }
+
+    if (productId) {
+      for (const { ean, context } of candidates) {
+        if (context.includes(`"id":${productId}`) ||
+            context.includes(`"id":"${productId}"`) ||
+            context.includes(`"variantId":${productId}`) ||
+            context.includes(`"sku":"${productId}"`)) {
+          return ean;
+        }
+      }
+    }
+
+    return null;
+  }
+
   async function extractProductData() {
     try {
       // Wait for the product card to mount.
@@ -36,30 +98,30 @@
       const title = h1 ? h1.textContent.trim() : '';
 
       // Current EUR price — must be scoped to the MAIN product card,
-      // not a related-products carousel below it. Answear reuses the
-      // same `ProductCardStylesProvider` class on every product card on
-      // the page, so an unscoped query can return the FIRST price in
-      // document order — which is sometimes a related/recommended
-      // product, not the one the user opened. Walk up from H1 to find
-      // the nearest container that wraps the main product details, and
-      // only query within it.
-      let mainCard = document;
-      if (h1) {
-        mainCard = h1.closest('[class*="ProductDetailLayout"], [class*="ProductDetailsLayout"], [class*="ProductDetail"], [class*="ProductPage"], main')
-          || h1.parentElement
-          || document;
+      // not a related-products carousel below it.
+      let mainCard = document.querySelector('[data-test="productCardDetails"]');
+      if (!mainCard && h1) {
+        mainCard = h1.closest('[class*="ProductDetailLayout"], [class*="ProductDetailsLayout"], [class*="ProductDetail"], [class*="ProductPage"], [class*="ProductCardStylesProvider__details"]')
+          || h1.parentElement;
       }
+      if (!mainCard) mainCard = document.querySelector('main') || document;
 
       let price = null;
-      // 1. Prefer SALE price (discounted current price) — when present
-      //    on a sale product, this is the buyable price.
+      // 1. Prefer SALE price (discounted current price).
       const saleEl = mainCard.querySelector('[data-test*="priceSale"], [class*="priceSaleMinimal"], [class*="priceSale"]:not([class*="priceRegular"])');
       if (saleEl) {
         const p = parseEurFromText(saleEl.textContent);
         if (p && p > 0) price = p;
       }
-      // 2. Fall back to the "actual" / single-price element for full-
-      //    price products.
+      // 2. Full-price products use data-test="regularPrice" (not priceActual).
+      if (price == null) {
+        const regEl = mainCard.querySelector('[data-test="regularPrice"], [data-test*="regularPrice"], [class*="priceRegular__"]:not([class*="Minimal"]):not([class*="Label"])');
+        if (regEl) {
+          const p = parseEurFromText(regEl.textContent);
+          if (p && p > 0) price = p;
+        }
+      }
+      // 3. Legacy "actual" / single-price element.
       if (price == null) {
         const actualEl = mainCard.querySelector('[data-test*="priceActual"], [class*="priceActualLabel"]');
         if (actualEl) {
@@ -67,25 +129,31 @@
           if (p && p > 0) price = p;
         }
       }
-      // 3. Last resort: scan EUR amounts within the main card only —
-      //    NEVER the whole document (that's how a 11.75 EUR product
-      //    once recorded a 64.99 EUR spike from a related-product card).
-      if (price == null && mainCard !== document) {
-        price = parseEurFromText(mainCard.textContent);
+      // 4. Last resort: scan price containers only — never whole-card
+      //    textContent (title dimensions like "30x50 cm" yield spurious €).
+      if (price == null) {
+        const priceContainers = mainCard.querySelectorAll('[data-test*="price"], [class*="priceSale"], [class*="priceRegular"], [class*="priceActual"]');
+        for (const el of priceContainers) {
+          if (/MinimalLabel|priceRegularMinimalLabel/i.test(el.className || '')) continue;
+          const p = parseEurFromText(el.textContent);
+          if (p && p > 0) { price = p; break; }
+        }
       }
 
-      // OOS — Answear uses a custom enum "OUT_OF_STOCK"; visible button
-      // becomes disabled. We check both signals where they're visible.
-      const allText = (document.body && document.body.textContent) || '';
-      if (/OUT_OF_STOCK/.test(allText) || document.querySelector('[data-test*="addToBasket"][disabled], [data-test*="addToCart"][disabled]')) {
+      // OOS — disabled basket only. Do not scan card text for OUT_OF_STOCK:
+      // variant JSON for other sizes embeds that string while the active
+      // variant is in stock (Tommy Jeans corpus false-positive).
+      if (mainCard.querySelector(
+        '[data-test*="addToBasket"][disabled], [data-test*="addToCart"][disabled], ' +
+        '[data-test="add_to_cart"][disabled], [data-test="add_to_basket"][disabled]'
+      )) {
         price = null;
       }
 
-      // Was-price (when discounted) — scoped to main card for the same
-      // reason as above.
+      // Was-price (when discounted) — MinimalLabel variants are was-price rows.
       let originalPrice = null;
-      const oldEl = mainCard.querySelector('[class*="priceRegularMinimal"], [class*="priceRegular"], [data-test*="priceRegular"]');
-      if (oldEl) {
+      const oldEl = mainCard.querySelector('[class*="priceRegularMinimal"], [class*="priceRegularMinimalLabel"], [data-test*="priceRegular"]');
+      if (oldEl && !oldEl.matches('[data-test="regularPrice"], [data-test*="regularPrice"]')) {
         const p = parseEurFromText(oldEl.textContent);
         if (p && p > 0 && (price == null || p > price)) originalPrice = p;
       }
@@ -94,6 +162,10 @@
       let thumbnail = null;
       const og = document.querySelector('meta[property="og:image"]');
       if (og && og.content) thumbnail = og.content;
+
+      // EAN — match active variant in SPA JSON (not first `"ean"` in doc order).
+      let ean = extractAnswearVariantEAN(mainCard);
+      if (!ean) ean = ProductParser.extractEAN(document);
 
       return {
         id: productId,
@@ -104,7 +176,7 @@
         discount: discount,
         site: 'answear',
         thumbnail: thumbnail,
-        ean: ProductParser.extractEAN(document)
+        ean: ean
       };
     } catch (error) {
       console.error('[Fake Discount] Answear extract error:', error);
@@ -138,10 +210,10 @@
   }
 
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enableAnswear' });
   }
 
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
   await new Promise(resolve => {
     if (document.readyState === 'complete') resolve();
     else window.addEventListener('load', resolve);

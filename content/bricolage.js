@@ -26,11 +26,55 @@
     return !!readProductJsonLd() || !!document.querySelector('.product__price, .product__prices');
   }
 
-  function readVisibleEur(selector) {
-    const el = document.querySelector(selector);
-    if (!el) return null;
-    const m = (el.textContent || '').match(/(\d[\d\s., ]*)/);
-    return m ? ProductParser.parsePrice(m[1]) : null;
+  function isEurPriceText(text) {
+    if (!text) return false;
+    if (/€/.test(text)) return true;
+    if (/лв/i.test(text)) return false;
+    return false;
+  }
+
+  function readVisibleEurCurrent() {
+    const selectors = [
+      '.product__prices-block--euro .product__price--new',
+      '.product__prices-block--euro .product__price-value',
+      '.euro__price.product__price--new',
+      '.euro__price.product__price-value',
+      '.product__prices-block:not(.product__prices-block--euro) .product__price--new',
+      '.product__prices-block:not(.product__prices-block--euro) .product__price-value'
+    ];
+    for (const sel of selectors) {
+      for (const el of document.querySelectorAll(sel)) {
+        const text = el.textContent || '';
+        if (!isEurPriceText(text)) continue;
+        const m = text.match(/(\d[\d\s., ]*)/);
+        if (m) {
+          const p = ProductParser.parsePrice(m[1]);
+          if (p && p > 0) return p;
+        }
+      }
+    }
+    return null;
+  }
+
+  function readVisibleEurOld() {
+    // Plain block holds EUR was-price; `--euro` block can be mislabeled BGN.
+    const selectors = [
+      '.product__prices-block:not(.product__prices-block--euro) .product__price--old',
+      '.product__prices-block--euro .product__price--old',
+      '.euro__price.product__price--old'
+    ];
+    for (const sel of selectors) {
+      for (const oldEl of document.querySelectorAll(sel)) {
+        const text = oldEl.textContent || '';
+        if (!/€/.test(text)) continue;
+        const m = text.match(/(\d[\d\s., ]*)/);
+        if (m) {
+          const p = ProductParser.parsePrice(m[1]);
+          if (p && p > 0) return p;
+        }
+      }
+    }
+    return null;
   }
 
   async function extractProductData() {
@@ -56,9 +100,9 @@
         }
       }
       if (price == null) {
-        // Visible-DOM EUR fallback. The price block has both EUR and BGN
-        // inside `.product__prices-block`; use the `--euro` variant.
-        price = readVisibleEur('.product__prices-block--euro .product__price--new, .product__prices-block--euro .product__price-value, .euro__price.product__price--new, .euro__price.product__price-value');
+        // Visible-DOM EUR fallback. `--euro` can be mislabeled BGN on some
+        // PDPs — require € in text, reject лв/ЛВ without €.
+        price = readVisibleEurCurrent();
       }
 
       if (ld && ld.offers) {
@@ -66,7 +110,7 @@
         if (offer && /OutOfStock/i.test(offer.availability || '')) price = null;
       }
 
-      const originalPrice = readVisibleEur('.product__prices-block--euro .product__price--old, .euro__price.product__price--old');
+      const originalPrice = readVisibleEurOld();
       const discount = originalPrice ? ProductParser.calculateDiscount(originalPrice, price) : null;
 
       let thumbnail = null;
@@ -133,10 +177,10 @@
   }
 
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enableBricolage' });
   }
 
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
   await new Promise(resolve => {
     if (document.readyState === 'complete') resolve();
     else window.addEventListener('load', resolve);

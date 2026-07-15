@@ -27,8 +27,31 @@
     return !!readProductJsonLd() || !!document.querySelector('.product-price-new, .price-wrapper');
   }
 
-  function readVisibleEur(selector) {
-    const el = document.querySelector(selector);
+  function offerPathname(offerUrl) {
+    if (typeof offerUrl !== 'string') return null;
+    try {
+      return new URL(offerUrl, window.location.origin).pathname;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function pickMatchingOffer(offers) {
+    if (!offers) return null;
+    const list = Array.isArray(offers) ? offers : [offers];
+    const here = window.location.pathname.replace(/\/$/, '') || '/';
+    const matched = list.find(o => {
+      const op = offerPathname(o.url);
+      if (!op) return false;
+      const offer = op.replace(/\/$/, '') || '/';
+      return offer === here || offer.startsWith(here + '/');
+    });
+    return matched || list[0];
+  }
+
+  function readVisibleEurInPdp(selector) {
+    const root = document.querySelector('main') || document.body;
+    const el = root.querySelector(selector);
     if (!el) return null;
     const m = (el.textContent || '').match(/(\d[\d\s., ]*)/);
     return m ? ProductParser.parsePrice(m[1]) : null;
@@ -56,19 +79,19 @@
       // `.product-price-new` is more reliable on this site.
       let price = null;
       if (ld && ld.offers) {
-        const offer = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
+        const offer = pickMatchingOffer(ld.offers);
         if (offer && (offer.priceCurrency || '').toUpperCase() === 'EUR') {
           const parsed = parseFloat(offer.price);
           if (Number.isFinite(parsed) && parsed > 0) price = Math.round(parsed * 100) / 100;
         }
       }
       if (price == null) {
-        price = readVisibleEur('.product-price-new, .price-wrapper.discount .price, .price-wrapper .price');
+        price = readVisibleEurInPdp('.product-price-new, .price-wrapper.discount .price, .price-wrapper .price');
       }
 
       // OOS via JSON-LD or visible markers.
       if (ld && ld.offers) {
-        const offer = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
+        const offer = pickMatchingOffer(ld.offers);
         if (offer && /OutOfStock/i.test(offer.availability || '')) price = null;
       }
 
@@ -167,10 +190,10 @@
   }
 
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enableObuvki' });
   }
 
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
   await new Promise(resolve => {
     if (document.readyState === 'complete') resolve();
     else window.addEventListener('load', resolve);

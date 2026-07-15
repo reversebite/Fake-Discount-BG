@@ -52,10 +52,26 @@
         // Visible-DOM fallback. Lilly uses Magento `.price-box` markup
         // with `.final-price` for current and `.old-price` for the
         // crossed-out previous price. Both contain BGN+EUR; we want EUR.
-        const el = document.querySelector('.price-box.price-final_price .final-price .price.euro, .final-price .price.euro, .price.euro');
-        if (el) {
-          const m = (el.textContent || '').match(/(\d[\d\s., ]*)/);
-          if (m) price = ProductParser.parsePrice(m[1]);
+        // Scope to the main product container and skip upsell rails.
+        const UPSELL_BLOCK = '.upsell-products, .upsell, .related-products, .crosssell, .cross-sell, [id*="upsell"], .similar-products, #related-products-field, .stenik-recommended-products';
+        const scopedSelectors = [
+          '.product-info-main .price-box.price-final_price .final-price .price.euro',
+          '.product-info-main .final-price .price.euro',
+          '#product_addtocart_form .final-price .price.euro',
+          '.price-box.price-final_price .final-price .price.euro',
+          '.final-price .price.euro',
+          '.price.euro'
+        ];
+        for (const sel of scopedSelectors) {
+          for (const el of document.querySelectorAll(sel)) {
+            if (el.closest(UPSELL_BLOCK)) continue;
+            const m = (el.textContent || '').match(/(\d[\d\s., ]*)/);
+            if (m) {
+              price = ProductParser.parsePrice(m[1]);
+              break;
+            }
+          }
+          if (price != null) break;
         }
       }
 
@@ -65,10 +81,27 @@
       }
 
       let originalPrice = null;
-      const oldEl = document.querySelector('.old-price .price.euro, .old-price .price');
-      if (oldEl) {
-        const m = (oldEl.textContent || '').match(/(\d[\d\s., ]*)/);
-        if (m) originalPrice = ProductParser.parsePrice(m[1]);
+      const UPSELL_BLOCK = '.upsell-products, .upsell, .related-products, .crosssell, .cross-sell, [id*="upsell"], .similar-products, #related-products-field, .stenik-recommended-products';
+      const oldPriceSelectors = [
+        '.product-info-main .old-price .price.euro',
+        '.product-info-main .old-price .price',
+        '#product_addtocart_form .old-price .price.euro',
+        '.old-price .price.euro',
+        '.old-price .price'
+      ];
+      for (const sel of oldPriceSelectors) {
+        for (const el of document.querySelectorAll(sel)) {
+          if (el.closest(UPSELL_BLOCK)) continue;
+          const wrapper = el.closest('.old-price') || el;
+          // Skip RRP-labeled wrappers (ПЦД / ПЦ) — not a previous selling price.
+          if (/ПЦД|ПЦ/.test(wrapper.textContent)) continue;
+          const m = (el.textContent || '').match(/(\d[\d\s., ]*)/);
+          if (m) {
+            originalPrice = ProductParser.parsePrice(m[1]);
+            break;
+          }
+        }
+        if (originalPrice != null) break;
       }
       const discount = originalPrice ? ProductParser.calculateDiscount(originalPrice, price) : null;
 
@@ -139,10 +172,10 @@
   }
 
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enableLilly' });
   }
 
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
   await new Promise(resolve => {
     if (document.readyState === 'complete') resolve();
     else window.addEventListener('load', resolve);

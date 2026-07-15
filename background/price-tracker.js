@@ -216,15 +216,27 @@ function detectFakeDiscount(productData) {
     }
   }
 
-  // Default: still gathering data — we have <7 entries so confirmed verdicts
-  // (FAKE_DISCOUNT / REAL_DEAL / STABLE_PRICE) can't fire. Show a neutral
-  // "tracking" state instead of mislabeling the price as stable.
+  // Default: still gathering data or no rule matched yet.
+  if (history.length < 7) {
+    return {
+      result: 'tracking',
+      verdict: 'TRACKING',
+      confidence: 0,
+      reasonKey: 'insufficientData',
+      reasonParams: { current: history.length, needed: 7 },
+      currentPrice,
+      originalPrice,
+      discount: originalPrice ? ((originalPrice - currentPrice) / originalPrice) * 100 : null,
+      stats
+    };
+  }
+
   return {
     result: 'tracking',
     verdict: 'TRACKING',
     confidence: 0,
-    reasonKey: 'insufficientData',
-    reasonParams: { current: history.length, needed: 7 },
+    reasonKey: 'noPatternMatch',
+    reasonParams: { observations, days },
     currentPrice,
     originalPrice,
     discount: originalPrice ? ((originalPrice - currentPrice) / originalPrice) * 100 : null,

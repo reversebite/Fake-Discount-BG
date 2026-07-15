@@ -23,6 +23,41 @@
     return m ? ProductParser.parsePrice(m[1]) : null;
   }
 
+  function readHeadLdPrice() {
+    for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+      try {
+        const data = JSON.parse(s.textContent);
+        const cs = Array.isArray(data) ? data : [data];
+        for (const c of cs) {
+          if (c && c['@type'] === 'Product' && c.offers) {
+            const off = Array.isArray(c.offers) ? c.offers[0] : c.offers;
+            if (off && (off.priceCurrency || '').toUpperCase() === 'EUR') {
+              const parsed = parseFloat(off.price);
+              if (Number.isFinite(parsed) && parsed > 0) return Math.round(parsed * 100) / 100;
+            }
+          }
+        }
+      } catch (_) { /* skip */ }
+    }
+    return null;
+  }
+
+  function readVisiblePrice() {
+    const priceMeta = document.querySelector('meta[itemprop="price"]');
+    const currencyMeta = document.querySelector('meta[itemprop="priceCurrency"]');
+    if (priceMeta && priceMeta.content && (!currencyMeta || (currencyMeta.content || '').toUpperCase() === 'EUR')) {
+      const parsed = parseFloat(priceMeta.content);
+      if (Number.isFinite(parsed) && parsed > 0) return Math.round(parsed * 100) / 100;
+    }
+    const region = document.querySelector('[data-dmid="product-detail"], [class*="ProductDetail"], main') || document.body;
+    const candidates = region.querySelectorAll('[data-dmid*="price"], [class*="price"], [itemprop="price"]');
+    for (const el of candidates) {
+      const p = parseEurFromText(el.textContent);
+      if (p && p > 0) return p;
+    }
+    return readHeadLdPrice();
+  }
+
   async function extractProductData() {
     try {
       // Generous wait for SPA hydration.
@@ -40,24 +75,12 @@
         if (og && og.content) title = og.content.trim();
       }
 
-      // Price: microdata first, then any element whose textContent
-      // contains an EUR amount inside the product-detail region.
-      let price = null;
-      const priceMeta = document.querySelector('meta[itemprop="price"]');
-      const currencyMeta = document.querySelector('meta[itemprop="priceCurrency"]');
-      if (priceMeta && priceMeta.content && (!currencyMeta || (currencyMeta.content || '').toUpperCase() === 'EUR')) {
-        const parsed = parseFloat(priceMeta.content);
-        if (Number.isFinite(parsed) && parsed > 0) price = Math.round(parsed * 100) / 100;
-      }
-      if (price == null) {
-        // Scan plausible price elements. Prefer ones inside a product
-        // detail container if present.
-        const region = document.querySelector('[data-dmid="product-detail"], [class*="ProductDetail"], main') || document.body;
-        const candidates = region.querySelectorAll('[data-dmid*="price"], [class*="price"], [itemprop="price"]');
-        for (const el of candidates) {
-          const p = parseEurFromText(el.textContent);
-          if (p && p > 0) { price = p; break; }
-        }
+      // Price: microdata first, then visible EUR in product-detail region.
+      // SPA shells may hydrate late — poll up to 3× after 1.5s gaps.
+      let price = readVisiblePrice();
+      for (let i = 0; price == null && i < 3; i++) {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        price = readVisiblePrice();
       }
 
       // OOS — best-effort. dm renders client-side and we don't have a
@@ -106,12 +129,14 @@
       }
 
       // Discount detection — dm shows old prices with strike-through.
-      // Best-effort: any element with class containing "old" or "rrp" near price.
+      // Scoped to the product-detail region only (no bare s/del globals).
       let originalPrice = null;
-      const oldEl = document.querySelector('[class*="oldPrice"], [class*="rrp"], [data-dmid*="rrp"], s, del');
-      if (oldEl) {
-        const p = parseEurFromText(oldEl.textContent);
-        if (p && p > 0 && (price == null || p > price)) originalPrice = p;
+      if (detail) {
+        const oldEl = detail.querySelector('[class*="oldPrice"], [class*="rrp"], [data-dmid*="rrp"]');
+        if (oldEl) {
+          const p = parseEurFromText(oldEl.textContent);
+          if (p && p > 0 && (price == null || p > price)) originalPrice = p;
+        }
       }
       const discount = originalPrice ? ProductParser.calculateDiscount(originalPrice, price) : null;
 
@@ -203,10 +228,10 @@
   }
 
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enableDm' });
   }
 
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
   await new Promise(resolve => {
     if (document.readyState === 'complete') resolve();
     else window.addEventListener('load', resolve);

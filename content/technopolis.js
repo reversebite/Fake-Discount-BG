@@ -207,12 +207,12 @@
   }
 
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enableTechnopolis' });
   }
 
   // Register the SPA-navigation listener before any early return so the
   // widget appears even when the user lands on a non-product page first.
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
 
   await new Promise(resolve => {
     if (document.readyState === 'complete') resolve();

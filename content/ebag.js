@@ -28,6 +28,18 @@
     return !!readProductJsonLd();
   }
 
+  function isDomOos() {
+    const root = document.querySelector('[data-page-name="productPage"], #store-root');
+    if (!root) return false;
+    for (const el of root.querySelectorAll('.sr-only, [class*="sr-only"], [class*="visually-hidden"]')) {
+      if (/не\s*е\s*наличен|изчерпан|няма\s*наличност/i.test(el.textContent || '')) return true;
+    }
+    for (const btn of root.querySelectorAll('button, a')) {
+      if (/^Извести\s*ме/i.test((btn.textContent || '').trim())) return true;
+    }
+    return false;
+  }
+
   async function extractProductData() {
     try {
       await ProductParser.waitForElement('script[type="application/ld+json"]', 6000).catch(() => { });
@@ -47,7 +59,8 @@
       }
 
       let price = null;
-      if (ld && ld.offers) {
+      const domOos = isDomOos();
+      if (!domOos && ld && ld.offers) {
         const offer = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
         if (offer && (offer.priceCurrency || '').toUpperCase() === 'EUR') {
           const parsed = parseFloat(offer.price);
@@ -55,11 +68,12 @@
         }
       }
 
-      // OOS via JSON-LD availability.
-      if (ld && ld.offers) {
+      // OOS via JSON-LD availability — only when DOM doesn't contradict.
+      if (!domOos && ld && ld.offers) {
         const offer = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
         if (offer && /OutOfStock|Discontinued/i.test(offer.availability || '')) price = null;
       }
+      if (domOos) price = null;
 
       // No reliable visible was-price selector in the saved SPA shell
       // samples — rely on history-based fake-discount detection.
@@ -137,10 +151,10 @@
   }
 
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enableEbag' });
   }
 
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
   await new Promise(resolve => {
     if (document.readyState === 'complete') resolve();
     else window.addEventListener('load', resolve);

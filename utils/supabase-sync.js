@@ -28,8 +28,24 @@
 //        create index price_history_product_idx
 //          on public.price_history (product_id, observed_date desc);
 //        alter table public.price_history enable row level security;
+//        -- Tables created via SQL Editor do NOT auto-grant to anon/
+//        -- authenticated — explicit grants are required (Supabase 2026+ default).
+//        grant select on public.price_history to anon;
+//        grant select, insert, update, delete on public.price_history
+//          to authenticated;
+//        grant select, insert, update, delete on public.price_history
+//          to service_role;
 //        create policy "anon can insert" on public.price_history
 //          for insert to anon with check (true);
+//        create policy "anon can update" on public.price_history
+//          for update to anon using (true) with check (true);
+//        create policy "anon can select" on public.price_history
+//          for select to anon using (true);
+//        -- Upsert from the extension requires BOTH:
+//        --   ?on_conflict=device_id,product_id,observed_date  (query param)
+//        --   Prefer: resolution=merge-duplicates               (header)
+//        -- Without the query param PostgREST targets the primary key (id) and
+//        -- same-day re-visits bounce off price_history_dedup_idx with 409.
 //   3. Add the project host to manifest.json host_permissions:
 //        "https://<project>.supabase.co/*"
 //   4. Reload the extension at chrome://extensions/.

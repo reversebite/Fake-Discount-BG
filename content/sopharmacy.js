@@ -43,9 +43,18 @@
       // Current EUR price — prefer the discount variant, fall back to
       // the plain euro price.
       let price = readVisibleEur('.price.price--discount.price--euro, .price--discount.price--euro');
-      if (price == null) price = readVisibleEur('.price.price--euro, .price--euro');
+      if (price == null) price = readVisibleEur('.price.price--euro:not(.price--old), .price--euro:not(.price--old)');
 
-      // OOS — visible markers.
+      // OOS — Hybris buying-area markers + existing body-text guard.
+      const buyingArea = document.querySelector('.product-detail, .product-info, .product-detail-info');
+      if (buyingArea) {
+        const buyingText = buyingArea.textContent || '';
+        if (buyingArea.querySelector('.out-of-stock')) {
+          price = null;
+        } else if (/Изчерпан/i.test(buyingText) && !buyingArea.querySelector('.js-empty-component-ajax')) {
+          price = null;
+        }
+      }
       const allText = (document.body && document.body.textContent) || '';
       if (/Изчерпан|Няма наличност|Не е наличен/i.test(allText) && !document.querySelector('.add-to-cart-btn:not([disabled]), button.add-to-cart:not([disabled])')) {
         // Only nuke price if the buy button is missing/disabled too —
@@ -116,10 +125,10 @@
   }
 
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enableSopharmacy' });
   }
 
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
   await new Promise(resolve => {
     if (document.readyState === 'complete') resolve();
     else window.addEventListener('load', resolve);

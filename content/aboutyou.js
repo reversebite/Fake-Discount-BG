@@ -28,12 +28,30 @@
     return !!document.querySelector('[data-testid="finalPrice"], [data-testid="priceBox"]') || !!readProductJsonLd();
   }
 
-  function readEur(selector) {
-    const el = document.querySelector(selector);
+  function findProductPriceRoot() {
+    return document.querySelector('[data-testid="productCardDetails"]')
+      || document.querySelector('[data-test-id="productCardDetails"]')
+      || (document.querySelector('[data-testid="priceBox"]') && document.querySelector('[data-testid="priceBox"]').closest('[data-testid="productCardDetails"], [class*="ProductDetail"]'))
+      || (document.querySelector('h1') && document.querySelector('h1').closest('[class*="ProductDetail"], main'))
+      || document;
+  }
+
+  function readEur(selector, root) {
+    const scope = root || document;
+    const el = scope.querySelector(selector);
     if (!el) return null;
     // EUR comes first in the dual-price text, e.g. "63,99 € / 125,15 лв."
     const m = (el.textContent || '').match(/(\d[\d\s., ]*)\s*€/);
     return m ? ProductParser.parsePrice(m[1]) : null;
+  }
+
+  function offerPathname(offerUrl) {
+    if (!offerUrl) return '';
+    try {
+      return new URL(offerUrl, window.location.origin).pathname.replace(/\/+$/, '');
+    } catch (_) {
+      return '';
+    }
   }
 
   async function extractProductData() {
@@ -54,14 +72,19 @@
         title = h1 ? h1.textContent.trim() : '';
       }
 
-      let price = readEur('[data-testid="finalPrice"]');
-      if (price == null) price = readEur('[data-testid="priceBox"]');
+      const priceRoot = findProductPriceRoot();
+      let price = readEur('[data-testid="finalPrice"]', priceRoot);
+      if (price == null) price = readEur('[data-testid="priceBox"]', priceRoot);
 
-      // OOS: JSON-LD availability OR disabled basket button.
+      // OOS: URL-matched offer availability OR disabled basket button.
+      // Do NOT use offers.some(OutOfStock) — other size variants can be
+      // OOS while the active variant is in stock.
       let oos = false;
       if (ld && ld.offers) {
         const offers = Array.isArray(ld.offers) ? ld.offers : [ld.offers];
-        oos = offers.some(o => /OutOfStock/i.test(o.availability || ''));
+        const here = window.location.pathname.replace(/\/+$/, '');
+        const matched = offers.find(o => offerPathname(o.url) === here);
+        if (matched && /OutOfStock/i.test(matched.availability || '')) oos = true;
       }
       const basketBtn = document.querySelector('#addToBasketButton, [data-testid="addToBasketButton"]');
       if (basketBtn && (basketBtn.disabled || basketBtn.getAttribute('aria-disabled') === 'true')) {
@@ -69,7 +92,7 @@
       }
       if (oos) price = null;
 
-      const originalPrice = readEur('[data-testid="originalPrice"]');
+      const originalPrice = readEur('[data-testid="originalPrice"]', priceRoot);
       const discount = originalPrice ? ProductParser.calculateDiscount(originalPrice, price) : null;
 
       let thumbnail = null;
@@ -166,10 +189,10 @@
   }
 
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enableAboutyou' });
   }
 
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
   await new Promise(resolve => {
     if (document.readyState === 'complete') resolve();
     else window.addEventListener('load', resolve);

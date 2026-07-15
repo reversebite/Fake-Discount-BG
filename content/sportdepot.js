@@ -119,10 +119,25 @@
   }
 
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enableSportdepot' });
   }
 
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  let variantDebounce = null;
+  function scheduleVariantRetrack() {
+    if (variantDebounce) clearTimeout(variantDebounce);
+    variantDebounce = setTimeout(() => {
+      ContentScriptBase.cleanupWidget();
+      trackAndDisplay();
+    }, 700);
+  }
+
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.product-color, [class*="color-variant"], [data-color-id], [data-variant]')) {
+      scheduleVariantRetrack();
+    }
+  }, true);
+
   await new Promise(resolve => {
     if (document.readyState === 'complete') resolve();
     else window.addEventListener('load', resolve);

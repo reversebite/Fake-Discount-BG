@@ -29,21 +29,28 @@
     try {
       // Wait for a price element to appear in the DOM (Emag can load prices dynamically)
       const priceSelectors = [
-        '.product-new-price',
-        '[data-price]',
+        '[data-test="main-price"]',
         '.product-page-pricing .product-new-price',
         '.product-highlight .product-new-price',
         '.main-product-form .product-new-price',
-        '[data-dynamic="product-price"]',
         '.price-container .product-new-price',
-        '.product-page-pricing-container .product-new-price'
+        '.product-page-pricing-container .product-new-price',
+        '[data-dynamic="product-price"]',
+        '.product-new-price',
+        '[data-price]'
       ];
+
+      const UPSELL_BLOCK_SELECTOR = '.js-recommendation-carousel, .related-products, .cross-sell, .crosssell, [class*="recommendation"], [class*="alternative-panel"], [class*="resealed"], [class*="upsell"]';
 
       await ProductParser.waitForElement(priceSelectors.join(', '), 5000).catch(() => {});
 
       let priceElement = null;
       for (const selector of priceSelectors) {
-        priceElement = document.querySelector(selector);
+        for (const el of document.querySelectorAll(selector)) {
+          if (el.closest(UPSELL_BLOCK_SELECTOR)) continue;
+          priceElement = el;
+          break;
+        }
         if (priceElement) break;
       }
 
@@ -90,6 +97,28 @@
       if (document.querySelector('.label-out_of_stock, [class*="label-out_of_stock"]')) {
         price = null;
       }
+      // Latent JSON-LD fallback when the DOM OOS label is absent.
+      if (price != null) {
+        const ldScripts = document.querySelectorAll('script[type="application/ld+json"]');
+        for (const s of ldScripts) {
+          try {
+            const data = JSON.parse(s.textContent);
+            const items = Array.isArray(data) ? data : [data];
+            for (const item of items) {
+              if (!item || item['@type'] !== 'Product') continue;
+              const offers = item.offers ? (Array.isArray(item.offers) ? item.offers : [item.offers]) : [];
+              for (const offer of offers) {
+                if (/OutOfStock/i.test(offer?.availability || '')) {
+                  price = null;
+                  break;
+                }
+              }
+              if (price == null) break;
+            }
+          } catch (_) { /* skip malformed */ }
+          if (price == null) break;
+        }
+      }
 
       // Extract original price (if discounted)
       const oldPriceSelectors = [
@@ -104,7 +133,11 @@
 
       let originalPriceElement = null;
       for (const selector of oldPriceSelectors) {
-        originalPriceElement = document.querySelector(selector);
+        for (const el of document.querySelectorAll(selector)) {
+          if (el.closest(UPSELL_BLOCK_SELECTOR)) continue;
+          originalPriceElement = el;
+          break;
+        }
         if (originalPriceElement) break;
       }
 
@@ -203,13 +236,13 @@
 
   // Track and display using shared flow
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enableEmag' });
   }
 
   // Always set up SPA navigation listener — register before any early return
   // so users who land on a non-product page first still get the widget when
   // they navigate to a product.
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
 
   // Wait for page to load
   await new Promise(resolve => {

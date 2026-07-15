@@ -11,10 +11,10 @@ A Chrome/Edge extension that detects fake discounts on 20 Bulgarian e-commerce s
 
 - **Automatic Tracking**: All products you visit are automatically tracked (no manual watchlist needed)
 - **Integrated Display**: Price graph and discount analysis displayed directly on product pages
-- **Verdict System**: Shows "Fake discount", "Real deal", "Stable price", or "Tracking" (when there isn't enough data yet) with reason text
-- **Extension Badge**: Per-tab icon badge — "!" for fake discounts, "✓" for real deals, 🎯 when a price target is hit
+- **Verdict System**: Shows "Fake discount", "Real deal", "Volatile price", "Stable price", or "Tracking" (when there isn't enough data yet) with reason text
+- **Extension Badge**: Per-tab icon badge — "!" for fake discounts, "✓" for real deals, 🎯 when a price target is hit (target badge overrides the verdict badge on that tab)
 - **Price Targets**: Set a target on any product; the chart shows a purple horizontal line at your target, the popup marks products with active targets, and a green pulsing pill appears when the target is reached
-- **Clickable Product List**: Click any product in the popup to open its page; price range (low-high) shown per product
+- **Clickable Product List**: Click any product in the popup to open its page
 - **Bilingual Support**: Bulgarian (default) and English, with localized date formatting in the chart
 - **Export/Import**: Back up and restore your price history data as JSON (validated and sanitized on import)
 - **EAN/GTIN tracking**: When a product's barcode is exposed it's stored alongside the price history for future cross-site price matching. Click an EAN in the popup to copy it to the clipboard. Coverage by site (based on a full audit of saved samples): consistent — **Notino, Obuvki, Zora, dm-drogeriemarkt**; occasional — **Praktiker, Mr.Bricolage** (barcode appears in the product description text on some products); none exposed in saved samples — Emag, Ozone, Ardes, Plesio, Technopolis, Technomarket, Aboutyou, Answear, Decathlon, Fashion Days, Lillydrogerie, Sopharmacy, Sportdepot, eBag.
@@ -32,7 +32,7 @@ A Chrome/Edge extension that detects fake discounts on 20 Bulgarian e-commerce s
 
 ## How It Works
 
-1. When you visit a product page on any supported site (Emag, Ozone, Notino, Technopolis, Technomarket, Zora, Ardes, Plesio, Aboutyou, Answear, Decathlon, dm-drogeriemarkt, Fashiondays, Lillydrogerie, Mr-bricolage, Obuvki, Praktiker, Sopharmacy, Sportdepot), the extension automatically:
+1. When you visit a product page on any supported site (Emag, Ozone, Notino, Technopolis, Technomarket, Zora, Ardes, Plesio, Aboutyou, Answear, Decathlon, dm-drogeriemarkt, Fashiondays, Lillydrogerie, Mr-bricolage, Obuvki, Praktiker, Sopharmacy, Sportdepot, eBag), the extension automatically:
    - Extracts product information (ID, price, title)
    - Stores price history in local storage
    - Analyzes price patterns to detect fake discounts
@@ -45,11 +45,11 @@ A Chrome/Edge extension that detects fake discounts on 20 Bulgarian e-commerce s
    - Overall pricing stability/volatility
 
 3. Verdict System:
-   - **FAKE DISCOUNT** (red): High confidence the discount is fake (original price inflated, or price raised before "sale")
-   - **REAL DEAL** (green): Legitimate discount — price is near or at all-time low
+   - **FAKE DISCOUNT** (red): High confidence the discount is misleading — claimed "original" price exceeds observed history, or current price is well above the 30-day low
+   - **REAL DEAL** (green): Legitimate discount — price is near or at all-time low, or (when no seller "was" price is shown) materially below the historical average
    - **VOLATILE PRICE** (orange): Price has fluctuated by 8%+ across the last 30 days — wait for a low point
-   - **STABLE PRICE** (yellow): Price has been confirmed stable over 7+ tracked days AND the 30-day range is tight (< 8% of average)
-   - **TRACKING** (gray): Fewer than 7 tracked days — not enough data for a confident verdict yet
+   - **STABLE PRICE** (yellow): Price has been confirmed stable over 7+ price observations AND the 30-day range is tight (< 8% of average)
+   - **TRACKING** (gray): Still gathering data — fewer than 7 price observations (`insufficientData` reason), or 7+ observations with no rule matched yet (`noPatternMatch` reason)
 
    Each verdict's reason text reports how many observations (datapoints) and
    days of tracking it's based on, so the reader can judge how strong the
@@ -65,7 +65,7 @@ A Chrome/Edge extension that detects fake discounts on 20 Bulgarian e-commerce s
 - **Full daily price history is kept indefinitely** (no compression) so the
   fake-discount detector always has accurate original-price comparisons
 - Storage usage shown with adaptive precision (e.g. "0.03%") in the popup
-- Auto-cleanup is disabled — only the manual "Cleanup old" button removes products
+- No automatic deletion — only the manual "Cleanup old" button removes products
 
 ## Popup
 
@@ -74,9 +74,9 @@ link in the header that re-opens the same UI as a full Chrome tab (handy when
 you have many tracked products).
 
 **Products tab** — search by name or EAN, filter by site (multi-select chips
-for all 19 supported stores: EMAG, OZONE, NOTINO, TECHNOPOLIS, TECHNOMARKET,
+for all 20 supported stores: EMAG, OZONE, NOTINO, TECHNOPOLIS, TECHNOMARKET,
 ZORA, ARDES, PLESIO, ABOUT YOU, ANSWEAR, DECATHLON, DM, FASHION DAYS, LILLY,
-MR.BRICOLAGE, OBUVKI, PRAKTIKER, SOPHARMACY, SPORT DEPOT), sort by recently
+MR.BRICOLAGE, OBUVKI, PRAKTIKER, SOPHARMACY, SPORT DEPOT, EBAG), sort by recently
 visited / price / targets-first. Each card
 shows thumbnail, title, EAN (when known, click to copy), "last seen" line,
 price, trend (↑ higher / ↓ lower / → same — only shown once there's a
@@ -88,10 +88,11 @@ target is set.
 - **Track prices on each supported site** — a master toggle per store
   (Emag, Ozone, Notino, Technopolis, Technomarket, Zora, Ardes, Plesio,
   Aboutyou, Answear, Decathlon, dm, Fashiondays, Lilly, Mr-bricolage,
-  Obuvki, Praktiker, Sopharmacy, Sportdepot). When off, no tracking and
-  no widget for that site.
+  Obuvki, Praktiker, Sopharmacy, Sportdepot, eBag). When off, no tracking,
+  no widget, and no Supabase uploads for that site.
 - **Show chart on product pages** — visibility toggle. When off, prices are
-  still tracked silently in the background; the chart just doesn't appear.
+  still tracked silently in the background and uploaded to the shared dataset;
+  the chart just doesn't appear.
 - **About** subsection — current version (read live from `manifest.json`),
   contact email, keyboard-shortcut hint and link to customise it
 
@@ -106,7 +107,7 @@ storage usage at a glance.
 ## Architecture
 
 - **Manifest V3** with content scripts and background service worker
-- `content/` - Site-specific content scripts (emag.js, ozone.js, notino.js, technopolis.js, technomarket.js, zora.js, ardes.js, plesio.js, aboutyou.js, answear.js, decathlon.js, dm.js, fashiondays.js, lilly.js, bricolage.js, obuvki.js, praktiker.js, sopharmacy.js, sportdepot.js) with shared base (content-base.js)
+- `content/` - Site-specific content scripts (emag.js, ozone.js, notino.js, technopolis.js, technomarket.js, zora.js, ardes.js, plesio.js, aboutyou.js, answear.js, decathlon.js, dm.js, fashiondays.js, lilly.js, bricolage.js, obuvki.js, praktiker.js, sopharmacy.js, sportdepot.js, ebag.js) with shared base (content-base.js)
 - `background/` - Service worker for message handling, storage, and price analysis
 - `ui/` - SVG-based chart rendering (advanced-chart.js) and widget UI (price-graph-widget.js)
 - `i18n/` - Bulgarian and English translation files
@@ -137,7 +138,7 @@ SQL setup block at the top of the file to wire up a separate project.
 ## Notes
 
 - Price history starts accumulating from the first time you visit a product
-- More data = better fake discount detection accuracy (TRACKING verdict transitions to a confident verdict at 7+ days)
+- More data = better fake discount detection accuracy (TRACKING with `insufficientData` transitions to a confident verdict or `noPatternMatch` at 7+ price observations)
 - The extension only tracks products you actually visit (not all products on the site)
 - Product identification uses URL path as primary key
 - All prices are displayed in EUR regardless of language setting
@@ -156,7 +157,7 @@ these files so they don't ship to users:
 - `HTML pages and links/` — saved reference HTML samples used while writing
   the content scripts (32 MB of dev-only material, gitignored)
 - `Emag.bg html.txt`, `Ozone.bg html.txt` — early saved-page reference dumps
-- `GPT 5.5 audit.md`, `AGENTS.md` — internal AI-agent / audit notes
+- `GPT 5.5 audit.md`, `composer 2.5 multi agent audit.md`, `AGENTS.md` — internal AI-agent / audit notes
 - `promo-small-440x280.png` — Chrome Web Store promo asset, uploaded
   separately via the Developer Dashboard (not part of the extension)
 - `CLAUDE.md` — internal AI-agent rules

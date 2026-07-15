@@ -78,15 +78,22 @@ class ProductParser {
         return `decathlon_${decathlonMatch[1]}`;
       }
 
-      // Sport Depot: /product/<slug>-<id>-basic.html?i=<num> — query `i` param is stable
-      const sportdepotMatch = url.match(/sportdepot\.bg\/product\/[^?#]+\.html\?[^#]*\bi=(\d+)/i);
-      if (sportdepotMatch) {
-        return `sportdepot_${sportdepotMatch[1]}`;
+      // Sport Depot: /product/<slug>-<id>-basic.html?i=<variantId>
+      // Prefer the stable slug numeric id over ?i= when both are present —
+      // ?i= is a colour/size variant key that changes per selection while
+      // the slug id is the canonical product bucket; using ?i= alone split
+      // the same shoe into multiple storage keys.
+      const sportdepotSlugIdMatch = url.match(/sportdepot\.bg\/product\/[^/]+-(\d+)-basic\.html/i);
+      if (sportdepotSlugIdMatch) {
+        return `sportdepot_${sportdepotSlugIdMatch[1]}`;
       }
-      // Fallback for sportdepot without query: use the slug
       const sportdepotSlugMatch = url.match(/sportdepot\.bg\/product\/([^?#/]+)\.html/i);
       if (sportdepotSlugMatch) {
         return `sportdepot_${sportdepotSlugMatch[1]}`;
+      }
+      const sportdepotMatch = url.match(/sportdepot\.bg\/product\/[^?#]+\.html\?[^#]*\bi=(\d+)/i);
+      if (sportdepotMatch) {
+        return `sportdepot_${sportdepotMatch[1]}`;
       }
 
       // Fashion Days: /p/<slug-with-cyrillic>-p<numericId>-<variant>/?gtm_data=...
@@ -244,23 +251,14 @@ class ProductParser {
   static extractEAN(doc) {
     const root = doc || document;
 
-    // Tier 1: JSON-LD Product
+    // Tier 1: JSON-LD Product / ProductGroup (@graph + hasVariant)
     try {
       const scripts = root.querySelectorAll('script[type="application/ld+json"]');
       for (const s of scripts) {
         let data;
         try { data = JSON.parse(s.textContent); } catch (_) { continue; }
-        const items = Array.isArray(data) ? data : [data];
-        for (const item of items) {
-          if (!item || typeof item !== 'object') continue;
-          if (item['@type'] !== 'Product') continue;
-          const candidates = [item.gtin13, item.gtin12, item.gtin8, item.gtin14, item.gtin, item.mpn];
-          for (const c of candidates) {
-            if (c == null) continue;
-            const v = String(c).replace(/\s+/g, '');
-            if (ProductParser.validateGTIN(v)) return v;
-          }
-        }
+        const gtin = ProductParser._gtinFromJsonLdNode(data);
+        if (gtin) return gtin;
       }
     } catch (_) { /* fall through to next tier */ }
 
@@ -310,6 +308,53 @@ class ProductParser {
       }
     } catch (_) { /* nothing else to try */ }
 
+    return null;
+  }
+
+  static _gtinFromProductFields(item) {
+    if (!item || typeof item !== 'object') return null;
+    const candidates = [item.gtin13, item.gtin12, item.gtin8, item.gtin14, item.gtin, item.mpn];
+    for (const c of candidates) {
+      if (c == null) continue;
+      const v = String(c).replace(/\s+/g, '');
+      if (ProductParser.validateGTIN(v)) return v;
+    }
+    return null;
+  }
+
+  static _gtinFromJsonLdNode(data) {
+    if (!data || typeof data !== 'object') return null;
+    if (Array.isArray(data)) {
+      for (const el of data) {
+        const found = ProductParser._gtinFromJsonLdNode(el);
+        if (found) return found;
+      }
+      return null;
+    }
+    if (Array.isArray(data['@graph'])) {
+      const found = ProductParser._gtinFromJsonLdNode(data['@graph']);
+      if (found) return found;
+    }
+    const type = data['@type'];
+    const types = Array.isArray(type) ? type : (type ? [type] : []);
+    if (types.includes('Product')) {
+      const gtin = ProductParser._gtinFromProductFields(data);
+      if (gtin) return gtin;
+    }
+    if (types.includes('ProductGroup') && Array.isArray(data.hasVariant)) {
+      for (const variant of data.hasVariant) {
+        if (!variant || typeof variant !== 'object') continue;
+        const gtin = ProductParser._gtinFromProductFields(variant);
+        if (gtin) return gtin;
+        if (variant.offers) {
+          const offers = Array.isArray(variant.offers) ? variant.offers : [variant.offers];
+          for (const offer of offers) {
+            const offerGtin = ProductParser._gtinFromProductFields(offer);
+            if (offerGtin) return offerGtin;
+          }
+        }
+      }
+    }
     return null;
   }
 

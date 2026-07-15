@@ -46,9 +46,11 @@
   //     </span>
   //   </div>
   function readCommonEurPrice() {
-    const integer = document.querySelector('.common-price .eur-price .price-tag');
+    const root = document.querySelector('#buying-info');
+    if (!root) return null;
+    const integer = root.querySelector('.common-price .eur-price .price-tag');
     if (!integer) return null;
-    const decimal = document.querySelector('.common-price .eur-price .after-decimal');
+    const decimal = root.querySelector('.common-price .eur-price .after-decimal');
     const text = (integer.textContent || '').trim() + (decimal ? (decimal.textContent || '').trim() : '');
     return ProductParser.parsePrice(text);
   }
@@ -57,7 +59,9 @@
   // `.strike-horizontal.original-price` flavour qualifies — the in-store
   // reference uses `.full-price.original-price` without the strike class.
   function readStrikeEurOldPrice() {
-    const integer = document.querySelector('.real-price .eur-price .strike-horizontal.original-price');
+    const root = document.querySelector('#buying-info');
+    if (!root) return null;
+    const integer = root.querySelector('.real-price .eur-price .strike-horizontal.original-price');
     if (!integer) return null;
     // Integer + .after-decimal child render the EUR amount.
     const decimal = integer.querySelector('.after-decimal');
@@ -97,6 +101,26 @@
       const availText = availStrong ? (availStrong.textContent || '').trim() : '';
       if (/По\s*заявка/i.test(availText)) {
         price = null;
+      }
+
+      // Marketplace / online-unavailable guard — JSON-LD may still say
+      // InStock when Ardes sells via a marketplace partner. When the buy
+      // CTA is disabled or hidden AND the availability strip signals
+      // online unavailability, skip recording today's price.
+      if (price != null) {
+        const buyBtn = document.querySelector(
+          '#buying-info button.btn-add-to-cart, #buying-info .add-to-cart button, ' +
+          '#buying-info [class*="add-to-cart"] button, #buying-info a.cart-add, a.cart-add'
+        );
+        const availCheck = document.querySelector('.availability-check');
+        const availAll = availCheck ? (availCheck.textContent || '') : '';
+        if (/изчерпан|недостъпен|не\s*е\s*наличен/i.test(availAll)) {
+          const buyDisabled = buyBtn && (buyBtn.disabled || buyBtn.hasAttribute('disabled'));
+          const buyHidden = buyBtn && buyBtn.offsetParent === null;
+          if (!buyBtn || buyDisabled || buyHidden) {
+            price = null;
+          }
+        }
       }
 
       // Was-price — only the strike-horizontal flavour qualifies (skips
@@ -164,10 +188,10 @@
   }
 
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enableArdes' });
   }
 
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
 
   await new Promise(resolve => {
     if (document.readyState === 'complete') resolve();

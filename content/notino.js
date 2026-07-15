@@ -45,6 +45,32 @@
     return !!readProductJsonLd();
   }
 
+  // Extract pathname from an offer URL for variant matching (absolute or
+  // relative). Compare to window.location.pathname — not substring match.
+  function offerPathname(offerUrl) {
+    if (typeof offerUrl !== 'string') return null;
+    try {
+      return new URL(offerUrl, window.location.origin).pathname;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Parent product URLs omit `/p-<variantId>/`; variant offers are one segment
+  // deeper. Exact pathname match alone misses OOS on slug-only pages.
+  function offerMatchesPage(offerUrl) {
+    const op = offerPathname(offerUrl);
+    if (!op) return false;
+    const here = window.location.pathname.replace(/\/$/, '') || '/';
+    const offer = op.replace(/\/$/, '') || '/';
+    if (offer === here) return true;
+    return offer.startsWith(here + '/');
+  }
+
+  function isOfferOutOfStock(offer) {
+    return /OutOfStock/i.test(offer?.availability || '');
+  }
+
   // Pull the first EUR amount out of a text blob like "22,10 € / 43,22 лв.".
   // Notino interleaves comments (<!-- -->) inside the price markup, so we
   // operate on `textContent` which strips them.
@@ -92,11 +118,14 @@
       // matching the current URL. We pick the highest because JSON-LD often
       // reflects the promo-code price; the highest-of-set is closest to the
       // regular displayed price for the selected variant.
-      if (price == null && productLd && Array.isArray(productLd.offers)) {
-        const eurOffers = productLd.offers.filter(o => (o.priceCurrency || '').toUpperCase() === 'EUR');
+      if (price == null && productLd && productLd.offers) {
+        const offers = Array.isArray(productLd.offers) ? productLd.offers : [productLd.offers];
+        const eurOffers = offers.filter(o =>
+          (o.priceCurrency || '').toUpperCase() === 'EUR' && !isOfferOutOfStock(o)
+        );
         if (eurOffers.length > 0) {
           const here = window.location.pathname;
-          const matching = eurOffers.filter(o => typeof o.url === 'string' && here.includes(o.url));
+          const matching = eurOffers.filter(o => offerPathname(o.url) === here);
           const pool = matching.length > 0 ? matching : eurOffers;
           const numeric = pool
             .map(o => parseFloat(o.price))
@@ -112,13 +141,10 @@
       // actually buy at, polluting both the local history and any future
       // cloud sync. Returning price=null lets ContentScriptBase.trackAndDisplay
       // render the widget with existing history without saving a new entry.
-      if (productLd && Array.isArray(productLd.offers)) {
-        const here = window.location.pathname;
-        const matched = productLd.offers.find(o => typeof o.url === 'string' && here.includes(o.url));
-        const availability = matched
-          ? (matched.availability || '')
-          : (productLd.offers[0] && productLd.offers[0].availability) || '';
-        if (/OutOfStock/i.test(availability)) {
+      if (productLd && productLd.offers) {
+        const offers = Array.isArray(productLd.offers) ? productLd.offers : [productLd.offers];
+        const matched = offers.find(o => offerMatchesPage(o.url));
+        if (matched && isOfferOutOfStock(matched)) {
           price = null;
         }
       }
@@ -205,12 +231,12 @@
   }
 
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enableNotino' });
   }
 
   // Register the SPA-navigation listener before any early return so the
   // widget appears even when the user lands on a non-product page first.
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
 
   await new Promise(resolve => {
     if (document.readyState === 'complete') resolve();

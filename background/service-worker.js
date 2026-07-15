@@ -29,24 +29,23 @@ try {
 
 // Storage manager with retry logic
 let storageManager = null;
-let storageInitAttempts = 0;
 const MAX_INIT_ATTEMPTS = 3;
 
 async function initStorageManager() {
   if (storageManager) return true;
 
-  while (storageInitAttempts < MAX_INIT_ATTEMPTS) {
-    storageInitAttempts++;
+  for (let attempt = 1; attempt <= MAX_INIT_ATTEMPTS; attempt++) {
     try {
       if (typeof PriceStorageManager !== 'undefined' && typeof PriceStorageManager === 'function') {
         storageManager = new PriceStorageManager();
         return true;
       }
     } catch (e) {
-      console.warn(`PriceStorageManager init attempt ${storageInitAttempts} failed:`, e);
+      console.warn(`PriceStorageManager init attempt ${attempt} failed:`, e);
     }
-    // Wait before retry
-    await new Promise(resolve => setTimeout(resolve, 500 * storageInitAttempts));
+    if (attempt < MAX_INIT_ATTEMPTS) {
+      await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+    }
   }
   return false;
 }
@@ -61,8 +60,91 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
+// Hosts the extension supports. Used to reject malicious imported URLs.
+const SUPPORTED_HOSTS = new Set([
+  'emag.bg', 'www.emag.bg',
+  'ozone.bg', 'www.ozone.bg',
+  'notino.bg', 'www.notino.bg',
+  'technopolis.bg', 'www.technopolis.bg',
+  'technomarket.bg', 'www.technomarket.bg',
+  'zora.bg', 'www.zora.bg',
+  'ardes.bg', 'www.ardes.bg',
+  'plesio.bg', 'www.plesio.bg',
+  'aboutyou.bg', 'www.aboutyou.bg',
+  'answear.bg', 'www.answear.bg',
+  'decathlon.bg', 'www.decathlon.bg',
+  'dm-drogeriemarkt.bg', 'www.dm-drogeriemarkt.bg',
+  'fashiondays.bg', 'www.fashiondays.bg',
+  'lillydrogerie.bg', 'www.lillydrogerie.bg',
+  'mr-bricolage.bg', 'www.mr-bricolage.bg',
+  'obuvki.bg', 'www.obuvki.bg',
+  'praktiker.bg', 'www.praktiker.bg',
+  'sopharmacy.bg', 'www.sopharmacy.bg',
+  'sportdepot.bg', 'www.sportdepot.bg',
+  'ebag.bg', 'www.ebag.bg'
+]);
+
+const POPUP_ONLY_ACTIONS = new Set([
+  'deleteProduct',
+  'getAllProducts',
+  'getProductCount',
+  'cleanupOldProducts',
+  'clearAllProducts',
+  'exportData',
+  'importData'
+]);
+
+const CONTENT_SCRIPT_ACTIONS = new Set([
+  'trackProduct',
+  'getProductAnalysis'
+]);
+
+const ALLOWED_EXTENSION_URL_PREFIXES = ['ui/', 'i18n/', 'icons/'];
+
+function senderIsPopup(sender) {
+  if (!sender?.url) return false;
+  return sender.url.startsWith(chrome.runtime.getURL('popup/'));
+}
+
+function senderIsSupportedContentTab(sender) {
+  if (!sender?.tab?.url) return false;
+  try {
+    const u = new URL(sender.tab.url);
+    if (u.protocol !== 'https:') return false;
+    return SUPPORTED_HOSTS.has(u.hostname.toLowerCase());
+  } catch (_) {
+    return false;
+  }
+}
+
+function isAllowedExtensionPath(path) {
+  if (typeof path !== 'string' || !path) return false;
+  if (path.includes('..') || path.startsWith('/')) return false;
+  return ALLOWED_EXTENSION_URL_PREFIXES.some(prefix => path.startsWith(prefix));
+}
+
+function senderIsExtensionContext(sender) {
+  return senderIsPopup(sender) || senderIsSupportedContentTab(sender);
+}
+
 // Listen for messages from content scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (POPUP_ONLY_ACTIONS.has(request.action) && !senderIsPopup(sender)) {
+    sendResponse({ success: false, error: 'unauthorized' });
+    return false;
+  }
+
+  if (CONTENT_SCRIPT_ACTIONS.has(request.action) && !senderIsSupportedContentTab(sender)) {
+    sendResponse({ success: false, error: 'unauthorized' });
+    return false;
+  }
+
+  const EXTENSION_CONTEXT_ACTIONS = new Set(['getLanguage', 'getExtensionUrl']);
+  if (EXTENSION_CONTEXT_ACTIONS.has(request.action) && !senderIsExtensionContext(sender)) {
+    sendResponse({ success: false, error: 'unauthorized' });
+    return false;
+  }
+
   if (request.action === 'trackProduct') {
     handleProductTracking(request.data, sendResponse, sender);
     return true; // Indicates we will send a response asynchronously
@@ -85,35 +167,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  if (request.action === 'getCurrentTabId') {
-    (async () => {
-      try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        sendResponse({ tabId: tab?.id });
-      } catch (e) {
-        sendResponse({ tabId: null });
-      }
-    })();
-    return true;
-  }
-
-  if (request.action === 'getStorageUsage') {
-    (async () => {
-      try {
-        const bytesUsed = await chrome.storage.local.getBytesInUse(null);
-        sendResponse({ bytesUsed: bytesUsed });
-      } catch (e) {
-        console.error('Error getting storage usage:', e);
-        sendResponse({ bytesUsed: 0 });
-      }
-    })();
-    return true;
-  }
-
   if (request.action === 'getExtensionUrl') {
     (async () => {
       try {
         const path = request.path || '';
+        if (!isAllowedExtensionPath(path)) {
+          sendResponse({ url: null });
+          return;
+        }
         const url = chrome.runtime.getURL(path);
         sendResponse({ url: url });
       } catch (e) {
@@ -274,30 +335,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 });
-
-// Hosts the extension supports. Used to reject malicious imported URLs.
-const SUPPORTED_HOSTS = new Set([
-  'emag.bg', 'www.emag.bg',
-  'ozone.bg', 'www.ozone.bg',
-  'notino.bg', 'www.notino.bg',
-  'technopolis.bg', 'www.technopolis.bg',
-  'technomarket.bg', 'www.technomarket.bg',
-  'zora.bg', 'www.zora.bg',
-  'ardes.bg', 'www.ardes.bg',
-  'plesio.bg', 'www.plesio.bg',
-  'aboutyou.bg', 'www.aboutyou.bg',
-  'answear.bg', 'www.answear.bg',
-  'decathlon.bg', 'www.decathlon.bg',
-  'dm-drogeriemarkt.bg', 'www.dm-drogeriemarkt.bg',
-  'fashiondays.bg', 'www.fashiondays.bg',
-  'lillydrogerie.bg', 'www.lillydrogerie.bg',
-  'mr-bricolage.bg', 'www.mr-bricolage.bg',
-  'obuvki.bg', 'www.obuvki.bg',
-  'praktiker.bg', 'www.praktiker.bg',
-  'sopharmacy.bg', 'www.sopharmacy.bg',
-  'sportdepot.bg', 'www.sportdepot.bg',
-  'ebag.bg', 'www.ebag.bg'
-]);
 
 // Returns true iff the URL is an https:// link to one of the supported
 // store domains. Used to reject malicious or off-domain entries in
@@ -493,7 +530,7 @@ async function handleProductTracking(productData, sendResponse, sender) {
 
     sendResponse({
       success: true,
-      product: product,
+      product: { ...product, id: productId },
       analysis: analysis
     });
   } catch (error) {
@@ -543,7 +580,7 @@ async function handleGetAnalysis(productId, sendResponse) {
 
     sendResponse({
       success: true,
-      product: product,
+      product: { ...product, id: productId },
       analysis: analysis
     });
   } catch (error) {

@@ -72,14 +72,24 @@
       //     bottom of the cascade. Don't reintroduce unscoped selectors high
       //     in the priority list.
       const priceSelectors = [
-        // Phase 1 — main-product-scoped (highest confidence)
-        '.product-essential .price-box .special-price .price',
+        // Phase 1 — main-product-scoped (highest confidence).
+        // Corpus: 4/4 saves lack `.product-essential`; lead with the
+        // wrappers that ARE present (#product_addtocart_form, etc.).
         '#product_addtocart_form .price-box .special-price .price',
         '.product-view-main .price-box .special-price .price',
+        '.product-info-main .price-box .special-price .price',
+        '.product-essential .price-box .special-price .price',
         '#product_addtocart_form [id^="product-price-"]',
-        '.product-essential [id^="product-price-"]',
         '.product-view-main [id^="product-price-"]',
+        '.product-info-main [id^="product-price-"]',
+        '.product-essential [id^="product-price-"]',
+        '#product_addtocart_form .price-box .regular-price .price',
+        '.product-view-main .price-box .regular-price .price',
+        '.product-info-main .price-box .regular-price .price',
         '.product-essential .price-box .regular-price .price',
+        '#product_addtocart_form .price',
+        '.product-view-main .price',
+        '.product-info-main .price',
         '.product-essential .price',
         // Phase 2 — unscoped last-resort fallbacks. Only fire when phase 1
         // fully misses, e.g. a future Ozone layout that drops the standard
@@ -129,14 +139,14 @@
 
       // Fallback: find price by pattern in main product area only
       if (!price || price === 0) {
-        const mainProductContainer = document.querySelector('.product-essential, .product-view, #product_addtocart_form');
+        const mainProductContainer = document.querySelector('#product_addtocart_form, .product-view-main, .product-info-main, .product-essential, .product-view');
         const searchArea = mainProductContainer || document.body;
 
         const allPriceElements = searchArea.querySelectorAll('[id*="price"], [class*="price"]');
 
         for (const el of allPriceElements) {
           if (el.closest('.old-price') || el.classList.contains('old-price')) continue;
-          if (el.closest('[id*="upsell"], .upsell, .recommended, .related-products')) continue;
+          if (el.closest(UPSELL_BLOCK_SELECTOR)) continue;
 
           const text = el.textContent.trim();
           const parsed = ProductParser.parsePrice(text);
@@ -173,13 +183,18 @@
       let originalPriceElement = null;
       let originalPriceText = '';
       for (const selector of oldPriceSelectors) {
-        const el = document.querySelector(selector);
-        if (!el) continue;
-        const wrapper = el.closest('.old-price') || el;
-        // Skip RRP-labeled wrappers — that's not a previous selling price.
-        if (/ПЦД/.test(wrapper.textContent)) continue;
-        originalPriceElement = el;
-        originalPriceText = el.textContent.trim();
+        const candidates = document.querySelectorAll(selector);
+        for (const el of candidates) {
+          if (el.closest(UPSELL_BLOCK_SELECTOR)) continue;
+          const wrapper = el.closest('.old-price') || el;
+          // Skip RRP-labeled wrappers — that's not a previous selling price.
+          if (/ПЦД/.test(wrapper.textContent)) continue;
+          const text = el.textContent.trim();
+          if (!text) continue;
+          originalPriceElement = el;
+          originalPriceText = text;
+          break;
+        }
         if (originalPriceText) break;
       }
 
@@ -336,13 +351,13 @@
 
   // Track and display using shared flow
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enableOzone' });
   }
 
   // Always set up SPA navigation listener — register before any early return
   // so users who land on a non-product page first still get the widget when
   // they navigate to a product.
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
 
   // Wait for page to load
   await new Promise(resolve => {

@@ -27,6 +27,67 @@
     return !!readProductJsonLd();
   }
 
+  function offerPathname(offerUrl) {
+    if (typeof offerUrl !== 'string') return null;
+    try {
+      return new URL(offerUrl, window.location.origin).pathname;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function pickMatchingOffer(offers) {
+    if (!offers) return null;
+    const list = Array.isArray(offers) ? offers : [offers];
+    const here = window.location.pathname.replace(/\/$/, '') || '/';
+    const matched = list.find(o => {
+      const op = offerPathname(o.url);
+      if (!op) return false;
+      const offer = op.replace(/\/$/, '') || '/';
+      return offer === here || offer.startsWith(here + '/');
+    });
+    return matched || list[0];
+  }
+
+  function readRrpPrice() {
+    const oldEl = document.querySelector('.rrp-price, .old-price__value');
+    if (!oldEl) return null;
+    let attr = oldEl.getAttribute('data-rrp-price');
+    if (!attr) {
+      const wrapper = oldEl.closest('.rrp-wrapper');
+      const attrEl = wrapper && wrapper.querySelector('[data-rrp-price]');
+      if (attrEl) attr = attrEl.getAttribute('data-rrp-price');
+    }
+    if (attr) {
+      const parsed = parseFloat(attr);
+      if (Number.isFinite(parsed) && parsed > 0) return Math.round(parsed * 100) / 100;
+    }
+    const primary = oldEl.querySelector('.primary');
+    if (primary) {
+      const intPart = (primary.textContent || '').trim();
+      const decEl = oldEl.querySelector('.price__decimals, i');
+      const decPart = decEl ? (decEl.textContent || '').replace(/[^\d]/g, '') : '';
+      const combined = decPart ? `${intPart}.${decPart}` : intPart;
+      const p = ProductParser.parsePrice(combined);
+      if (p && p > 0) return p;
+    }
+    const decEl = oldEl.querySelector('.price__decimals, i.price__decimals, i');
+    if (decEl) {
+      let intPart = '';
+      for (const n of oldEl.childNodes) {
+        if (n.nodeType === Node.TEXT_NODE) intPart += n.textContent;
+        else if (n === decEl) break;
+      }
+      const decPart = (decEl.textContent || '').replace(/[^\d]/g, '');
+      if (intPart.trim() && decPart) {
+        const p = ProductParser.parsePrice(`${intPart.trim()}.${decPart}`);
+        if (p && p > 0) return p;
+      }
+    }
+    const m = (oldEl.textContent || '').match(/(\d[\d\s., ]*)/);
+    return m ? ProductParser.parsePrice(m[1]) : null;
+  }
+
   async function extractProductData() {
     try {
       await ProductParser.waitForElement('script[type="application/ld+json"]', 5000).catch(() => { });
@@ -47,7 +108,7 @@
 
       let price = null;
       if (ld && ld.offers) {
-        const offer = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
+        const offer = pickMatchingOffer(ld.offers);
         if (offer && (offer.priceCurrency || '').toUpperCase() === 'EUR') {
           const parsed = parseFloat(offer.price);
           if (Number.isFinite(parsed) && parsed > 0) price = Math.round(parsed * 100) / 100;
@@ -62,19 +123,14 @@
       }
 
       if (ld && ld.offers) {
-        const offer = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
+        const offer = pickMatchingOffer(ld.offers);
         if (offer && /OutOfStock/i.test(offer.availability || '')) price = null;
       }
 
       // Was-price: prefer the struck-through `.rrp-price` (real previous
       // selling price). Skip the `.cmmp30-price` slot — that's the
       // EU-mandated lowest-30-day reference, not a was-price.
-      let originalPrice = null;
-      const oldEl = document.querySelector('.rrp-price, .old-price__value');
-      if (oldEl) {
-        const m = (oldEl.textContent || '').match(/(\d[\d\s., ]*)/);
-        if (m) originalPrice = ProductParser.parsePrice(m[1]);
-      }
+      let originalPrice = readRrpPrice();
       const discount = originalPrice ? ProductParser.calculateDiscount(originalPrice, price) : null;
 
       let thumbnail = null;
@@ -140,10 +196,10 @@
   }
 
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enableFashiondays' });
   }
 
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
   await new Promise(resolve => {
     if (document.readyState === 'complete') resolve();
     else window.addEventListener('load', resolve);

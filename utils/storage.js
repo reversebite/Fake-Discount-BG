@@ -25,11 +25,30 @@
     // Named PriceStorageManager to avoid conflict with the built-in Web StorageManager API
     _globalScope.PriceStorageManager = class PriceStorageManager {
       constructor() {
-        this.MAX_PRODUCTS = 10000;
         this._migrationPromise = null;
         // Per-product write queue: serializes writes to the same product so two
         // overlapping saveProduct calls can't clobber each other.
         this._writeQueue = new Map();
+        // Serializes product_index read-modify-write so concurrent new-product /
+        // import / delete ops can't drop IDs from the index.
+        this._indexQueue = Promise.resolve();
+      }
+
+      // Serialize product_index RMW operations.
+      _withIndexLock(fn) {
+        const current = this._indexQueue
+          .catch(() => {})
+          .then(() => fn());
+        this._indexQueue = current;
+        return current;
+      }
+
+      async _drainQueues() {
+        const pending = [
+          ...this._writeQueue.values(),
+          this._indexQueue
+        ];
+        await Promise.all(pending.map(p => p.catch(() => {})));
       }
 
       // Ensure migration has completed before any operation
@@ -153,9 +172,8 @@
 
       async _saveProductInternal(productId, productData) {
         const key = PRODUCT_PREFIX + productId;
-        const existingResult = await chrome.storage.local.get([key, INDEX_KEY]);
+        const existingResult = await chrome.storage.local.get([key]);
         const existing = existingResult[key];
-        const index = existingResult[INDEX_KEY] || [];
 
         let updatedProduct;
         const today = this.getTodayDate();
@@ -215,114 +233,96 @@
             isActive: true
           };
 
-          // Add to index
-          index.push(productId);
-
-          // Check storage limit
-          if (index.length > this.MAX_PRODUCTS) {
-            await this._evictOldProducts(index);
-          }
-
-          // Save product and updated index
-          await chrome.storage.local.set({
-            [key]: updatedProduct,
-            [INDEX_KEY]: index
+          await this._withIndexLock(async () => {
+            const idxResult = await chrome.storage.local.get([INDEX_KEY]);
+            const idx = idxResult[INDEX_KEY] || [];
+            if (!idx.includes(productId)) {
+              idx.push(productId);
+            }
+            await chrome.storage.local.set({
+              [key]: updatedProduct,
+              [INDEX_KEY]: idx
+            });
           });
         }
 
         return updatedProduct;
       }
 
-      // Import a product with full history preserved (used for data import)
+      // Import a product with full history preserved (used for data import).
+      // Serialized per-product via _writeQueue like saveProduct.
       async importProduct(productId, productData) {
         await this.ensureMigrated();
 
         const key = PRODUCT_PREFIX + productId;
-        const result = await chrome.storage.local.get([INDEX_KEY]);
-        const index = result[INDEX_KEY] || [];
+        const previousWrite = this._writeQueue.get(key) || Promise.resolve();
+        const currentWrite = previousWrite
+          .catch(() => {})
+          .then(() => this._importProductInternal(productId, productData));
 
-        // Store the full product data as-is
-        await chrome.storage.local.set({ [key]: productData });
+        this._writeQueue.set(key, currentWrite);
 
-        // Add to index if not already present
-        if (!index.includes(productId)) {
-          index.push(productId);
-          await chrome.storage.local.set({ [INDEX_KEY]: index });
-        }
-      }
-
-      // Evict old inactive products (private method)
-      async _evictOldProducts(index) {
-        const now = new Date();
-        const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-
-        // Fetch all products to determine which to evict
-        const keys = index.map(id => PRODUCT_PREFIX + id);
-        const result = await chrome.storage.local.get(keys);
-
-        const productArray = index.map(id => ({
-          id,
-          data: result[PRODUCT_PREFIX + id],
-          lastUpdated: new Date(result[PRODUCT_PREFIX + id]?.lastUpdated || 0),
-          isActive: result[PRODUCT_PREFIX + id]?.isActive
-        }));
-
-        // Sort by lastUpdated, inactive first
-        productArray.sort((a, b) => {
-          if (a.isActive !== b.isActive) return a.isActive ? 1 : -1;
-          return a.lastUpdated - b.lastUpdated;
-        });
-
-        // Remove oldest inactive products until under limit
-        let toRemove = index.length - this.MAX_PRODUCTS;
-        const keysToRemove = [];
-        const idsToRemove = new Set();
-
-        for (const product of productArray) {
-          if (toRemove <= 0) break;
-          if (!product.isActive || product.lastUpdated < ninetyDaysAgo) {
-            keysToRemove.push(PRODUCT_PREFIX + product.id);
-            idsToRemove.add(product.id);
-            toRemove--;
+        try {
+          return await currentWrite;
+        } finally {
+          if (this._writeQueue.get(key) === currentWrite) {
+            this._writeQueue.delete(key);
           }
         }
-
-        if (keysToRemove.length > 0) {
-          await chrome.storage.local.remove(keysToRemove);
-
-          // Update index
-          const newIndex = index.filter(id => !idsToRemove.has(id));
-          await chrome.storage.local.set({ [INDEX_KEY]: newIndex });
-        }
       }
 
-      // Mark product as inactive
-      async markInactive(productId) {
-        const product = await this.getProduct(productId);
-        if (product) {
-          product.isActive = false;
-          await chrome.storage.local.set({ [PRODUCT_PREFIX + productId]: product });
-        }
+      async _importProductInternal(productId, productData) {
+        const key = PRODUCT_PREFIX + productId;
+
+        await chrome.storage.local.set({ [key]: productData });
+
+        await this._withIndexLock(async () => {
+          const result = await chrome.storage.local.get([INDEX_KEY]);
+          const index = result[INDEX_KEY] || [];
+          if (!index.includes(productId)) {
+            index.push(productId);
+            await chrome.storage.local.set({ [INDEX_KEY]: index });
+          }
+        });
       }
 
-      // Delete a specific product - O(1) operation
+      // Delete a specific product — serialized per key via _writeQueue.
       async deleteProduct(productId) {
         await this.ensureMigrated();
 
         const key = PRODUCT_PREFIX + productId;
-        const result = await chrome.storage.local.get([key, INDEX_KEY]);
+        const previousWrite = this._writeQueue.get(key) || Promise.resolve();
+        const currentWrite = previousWrite
+          .catch(() => {})
+          .then(() => this._deleteProductInternal(productId));
+
+        this._writeQueue.set(key, currentWrite);
+
+        try {
+          return await currentWrite;
+        } finally {
+          if (this._writeQueue.get(key) === currentWrite) {
+            this._writeQueue.delete(key);
+          }
+        }
+      }
+
+      async _deleteProductInternal(productId) {
+        const key = PRODUCT_PREFIX + productId;
+        const result = await chrome.storage.local.get([key]);
 
         if (!result[key]) {
           return false;
         }
 
-        // Remove from storage
         await chrome.storage.local.remove([key]);
 
-        // Update index
-        const index = result[INDEX_KEY] || [];
-        const newIndex = index.filter(id => id !== productId);
-        await chrome.storage.local.set({ [INDEX_KEY]: newIndex });
+        await this._withIndexLock(async () => {
+          const idxResult = await chrome.storage.local.get([INDEX_KEY]);
+          const index = idxResult[INDEX_KEY] || [];
+          const newIndex = index.filter(id => id !== productId);
+          await chrome.storage.local.set({ [INDEX_KEY]: newIndex });
+        });
 
         return true;
       }
@@ -330,6 +330,7 @@
       // Clear all history
       async clearAll() {
         await this.ensureMigrated();
+        await this._drainQueues();
 
         const index = await this.getProductIndex();
         const keys = index.map(id => PRODUCT_PREFIX + id);

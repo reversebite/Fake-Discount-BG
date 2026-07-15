@@ -1,9 +1,10 @@
 // Content script for Praktiker.bg
 // Angular SPA. Reliable schema.org Product JSON-LD with EUR price.
 // Note: even on confirmed-OOS samples Praktiker's JSON-LD reports
-// `availability: InStock` while the visible UI swaps the buy button
-// for a "Провери наличност" (check availability in stores) link.
-// We treat that visible signal as the authoritative OOS check.
+// `availability: InStock` while the visible `.pdp__status` span shows
+// "Продуктът е изчерпан онлайн…" for online-OOS items. We read
+// `.pdp__status` for изчерпан/out-of-stock wording — not the generic
+// "Провери наличност" check-in-stores CTA (present on every page).
 //
 // EAN often appears in the description text (free-form barcode mention)
 // — the generic `ProductParser.extractEAN(document)` visible-text scan
@@ -131,10 +132,10 @@
   }
 
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enablePraktiker' });
   }
 
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
   await new Promise(resolve => {
     if (document.readyState === 'complete') resolve();
     else window.addEventListener('load', resolve);

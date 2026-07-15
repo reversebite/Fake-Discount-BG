@@ -250,9 +250,11 @@ if (typeof window !== 'undefined') {
       const data = this._validData || this.data || [];
       const dateSteps = Math.min(5, data.length);
       for (let i = 0; i < dateSteps; i++) {
-        const index = Math.floor((i / (dateSteps - 1)) * (data.length - 1));
+        const index = dateSteps === 1
+          ? 0
+          : Math.floor((i / (dateSteps - 1)) * (data.length - 1));
         if (index >= data.length || !data[index] || !data[index].date) continue;
-        const x = (index / (data.length - 1)) * width;
+        const x = data.length > 1 ? (index / (data.length - 1)) * width : 0;
         const date = new Date(data[index].date);
 
         const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');

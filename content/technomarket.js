@@ -116,13 +116,13 @@
       }
       const discount = originalPrice ? ProductParser.calculateDiscount(originalPrice, price) : null;
 
-      // Out-of-stock guard. The user did not provide an OOS sample, so this
-      // is best-effort: when the visible EUR price is missing OR the main
-      // add-to-cart button is `disabled`, treat as OOS and skip recording.
-      // Existing history is preserved (we just don't append today).
+      // Out-of-stock guard — require the main add-to-cart button to be
+      // explicitly `disabled`. Don't treat a missing visible EUR price alone
+      // as OOS: the <tm-price> block can hydrate after our first read.
       const addCartBtn = document.querySelector('button[data-action="addCart"]');
-      const isOos = !readVisibleEurPrice() || (addCartBtn && addCartBtn.hasAttribute('disabled'));
-      if (isOos) price = null;
+      if (addCartBtn && addCartBtn.hasAttribute('disabled')) {
+        price = null;
+      }
 
       // Thumbnail: first JSON-LD image (Technomarket exposes a multi-image
       // gallery with the hero image first), fallback to the og:image meta,
@@ -204,10 +204,10 @@
   }
 
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enableTechnomarket' });
   }
 
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
 
   await new Promise(resolve => {
     if (document.readyState === 'complete') resolve();

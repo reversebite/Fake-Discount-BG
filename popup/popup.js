@@ -20,8 +20,8 @@
   }
 
   // Single source of truth for the current version. Read once at popup load
-  // from the manifest so every visible mention (About line, mailto subject,
-  // mailto body) updates automatically the next time manifest.json is bumped.
+  // from the manifest so every visible mention (About line) updates
+  // automatically the next time manifest.json is bumped.
   const VERSION = chrome.runtime.getManifest().version;
   const CONTACT_EMAIL = 'fakediscountbg@gmail.com';
 
@@ -71,6 +71,16 @@
       const u = new URL(url);
       if (u.protocol !== 'https:') return false;
       return SUPPORTED_HOSTS.has(u.hostname.toLowerCase());
+    } catch (_) {
+      return false;
+    }
+  }
+  // Thumbnail URLs may point at store CDNs — only enforce https:// scheme.
+  function isSafeThumbnailUrl(url) {
+    if (typeof url !== 'string' || !url) return false;
+    try {
+      const u = new URL(url);
+      return u.protocol === 'https:';
     } catch (_) {
       return false;
     }
@@ -442,7 +452,7 @@
       productList.style.display = 'none';
       noProductsMsg.style.display = 'block';
       // Customize empty message if filters are active vs truly empty
-      if (cachedProducts.length > 0 && (searchQuery || activeSites.size < 3)) {
+      if (cachedProducts.length > 0 && (searchQuery || activeSites.size !== ALL_SITES.length)) {
         noProductsMsg.textContent = t('search.noResults') || 'No matches';
       } else {
         noProductsMsg.textContent = t('settings.noProducts');
@@ -482,7 +492,7 @@
       productItem.className = 'product-item';
 
       // Thumbnail
-      if (product.thumbnail) {
+      if (product.thumbnail && isSafeThumbnailUrl(product.thumbnail)) {
         const img = document.createElement('img');
         img.src = product.thumbnail;
         img.alt = product.title;
@@ -893,10 +903,9 @@
         if (response?.success) {
           const imported = response.imported || 0;
           const skipped = response.skipped || 0;
-          const baseMsg = t('settings.dataImported') || 'Data imported';
           const summary = skipped > 0
-            ? `${baseMsg} (${imported} imported, ${skipped} skipped as invalid)`
-            : `${baseMsg} (${imported})`;
+            ? `${t('settings.dataImported')}\n${t('data.importSummary', { imported, skipped })}`
+            : `${t('settings.dataImported')} (${imported})`;
           alert(summary);
           updateStorageInfo();
           loadFollowedProducts();

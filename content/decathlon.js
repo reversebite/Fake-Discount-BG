@@ -25,6 +25,28 @@
     return !!readProductJsonLd();
   }
 
+  function offerPathname(offerUrl) {
+    if (typeof offerUrl !== 'string') return null;
+    try {
+      return new URL(offerUrl, window.location.origin).pathname;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function pickMatchingOffer(offers) {
+    if (!offers) return null;
+    const list = Array.isArray(offers) ? offers : [offers];
+    const here = window.location.pathname.replace(/\/$/, '') || '/';
+    const matched = list.find(o => {
+      const op = offerPathname(o.url);
+      if (!op) return false;
+      const offer = op.replace(/\/$/, '') || '/';
+      return offer === here || offer.startsWith(here + '/');
+    });
+    return matched || list[0];
+  }
+
   function readVisiblePrice() {
     const el = document.querySelector('.price_amount, [class*="price_amount"]');
     if (!el) return null;
@@ -55,7 +77,7 @@
 
       let price = null;
       if (ld && ld.offers) {
-        const offer = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
+        const offer = pickMatchingOffer(ld.offers);
         if (offer && (offer.priceCurrency || '').toUpperCase() === 'EUR') {
           const parsed = parseFloat(offer.price);
           if (Number.isFinite(parsed) && parsed > 0) price = Math.round(parsed * 100) / 100;
@@ -65,7 +87,7 @@
 
       // OOS via JSON-LD availability.
       if (ld && ld.offers) {
-        const offer = Array.isArray(ld.offers) ? ld.offers[0] : ld.offers;
+        const offer = pickMatchingOffer(ld.offers);
         if (offer && /OutOfStock|Discontinued/i.test(offer.availability || '')) price = null;
       }
 
@@ -122,10 +144,10 @@
   }
 
   async function trackAndDisplay() {
-    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage);
+    await ContentScriptBase.trackAndDisplay(extractProductData, injectWidget, isProductPage, { enableStorageKey: 'enableDecathlon' });
   }
 
-  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay);
+  ContentScriptBase.setupNavigation(isProductPage, trackAndDisplay, { navigationDelayMs: 2500 });
   await new Promise(resolve => {
     if (document.readyState === 'complete') resolve();
     else window.addEventListener('load', resolve);

@@ -277,7 +277,7 @@
       label1.textContent = t('stats.allTimeLow');
       const value1 = document.createElement('div');
       value1.className = 'fake-discount-stat-value low';
-      value1.textContent = hasHistory ? `${allTimeLow.toFixed(2)} ${currency}` : `N/A`;
+      value1.textContent = hasHistory ? `${allTimeLow.toFixed(2)} ${currency}` : t('stats.notAvailable');
       stat1.appendChild(label1);
       stat1.appendChild(value1);
       statsGrid.appendChild(stat1);
@@ -289,7 +289,7 @@
       label2.textContent = t('stats.allTimeHigh');
       const value2 = document.createElement('div');
       value2.className = 'fake-discount-stat-value high';
-      value2.textContent = hasHistory ? `${allTimeHigh.toFixed(2)} ${currency}` : `N/A`;
+      value2.textContent = hasHistory ? `${allTimeHigh.toFixed(2)} ${currency}` : t('stats.notAvailable');
       stat2.appendChild(label2);
       stat2.appendChild(value2);
       statsGrid.appendChild(stat2);
@@ -340,7 +340,7 @@
       targetInput.placeholder = `${currency}`;
       targetInput.min = '0';
       targetInput.step = '0.01';
-      targetInput.setAttribute('data-product-id', product.url || '');
+      targetInput.setAttribute('data-product-id', product.id || product.url || '');
       const targetBtn = document.createElement('button');
       targetBtn.type = 'button'; // Prevent native form submission if inside a <form>
       targetBtn.className = 'fake-discount-target-btn';
@@ -603,7 +603,7 @@
         }
         const errorDiv = document.createElement('div');
         errorDiv.className = 'fake-discount-error';
-        errorDiv.textContent = 'Error rendering chart';
+        errorDiv.textContent = t('errors.chartRenderFailed');
         chartContainer.appendChild(errorDiv);
       }
     }

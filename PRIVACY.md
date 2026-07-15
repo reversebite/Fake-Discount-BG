@@ -1,12 +1,12 @@
 # Privacy Policy — Fake Discount Bulgaria
 
-**Last updated:** 14 May 2026
+**Last updated:** 30 June 2026
 
 ## Summary
 
 Fake Discount Bulgaria is a browser extension that detects fake discounts
 on 20 Bulgarian e-commerce sites by recording the prices of products you
-visit. Most data stays in your browser. **A short, anonymous record of
+visit. Most data stays in your browser. **A short, pseudonymous record of
 each product observation is also uploaded to a developer-controlled
 Postgres database (Supabase)** so the extension can build a shared
 price-history dataset across all installs.
@@ -24,8 +24,11 @@ The extension only runs on these 20 Bulgarian e-commerce domains:
 `Lillydrogerie.bg`, `Mr-bricolage.bg`, `Obuvki.bg`, `Praktiker.bg`,
 `Sopharmacy.bg`, `Sportdepot.bg`, `eBag.bg`.
 
-It does not run on any other site, does not see any other site's content,
-and does not have access to your browsing history outside these domains.
+It does not run on any other site and does not read any other site's page
+content. Because the extension uses Chrome's `tabs` permission for
+single-page-app navigation refreshes, the service worker may receive URL
+change events for open tabs, but it does not store or upload URLs outside
+the supported domains.
 
 ## What is stored locally (in your browser)
 
@@ -44,6 +47,17 @@ extension stores the following in your browser's local extension storage
   popup filter chips, sort preference)
 - A random pseudonymous device ID (UUID v4) used to deduplicate uploads
   from the same installation
+
+Hiding the on-page chart (Settings → "Show chart on product pages") does
+**not** stop local price tracking or Supabase uploads — it only controls
+whether the widget is drawn on the product page.
+
+Turning off **Track prices on** a specific store stops tracking, widget
+injection, and cloud uploads for that store only. Other enabled stores
+continue to record and upload as usual. The change takes effect on the
+**next page load or in-page navigation** for that store (Manifest V3
+content scripts are injected once per document lifecycle), not instantly
+on tabs that are already open when you flip the toggle.
 
 This local data is used to build a price history for each product, to
 detect whether a displayed discount is genuine, and to render the
@@ -69,7 +83,8 @@ save or widget render. Each upload contains:
 | `original_price` | `599.00` | Seller's claimed "was" price, when shown. |
 | `discount` | `17` | Percentage difference between the two. |
 | `observed_date` | `2026-05-14` | Date of the observation (local time). |
-| `ext_version` | `3.15.2` | Extension version that recorded the observation. |
+| `observed_at` | server timestamp | Supabase/Postgres timestamp for when the upload was received. |
+| `ext_version` | `3.16.3` | Extension version that recorded the observation. |
 | `user_agent` | full browser UA string | Browser/OS identification, for debugging extraction issues. |
 
 The upload is keyed by `(device_id, product_id, observed_date)` — only
@@ -91,21 +106,31 @@ The dataset is not sold, not shared with advertising networks, and not
 used for targeted advertising. The developer has access to it for
 maintenance and feature development.
 
+There is **no in-extension toggle** to disable cloud uploads in the
+public build. Forks can blank the Supabase constants in
+`utils/supabase-sync.js` for a local-only build.
+
 ## What the extension does NOT collect
 
 - **Personally identifiable information** — no name, email, address,
-  phone number, account ID, IP address (beyond what your browser
-  unavoidably sends with the upload itself), or social media handle.
+  phone number, account ID, or social media handle is written by the
+  extension. Supabase receives normal request metadata such as IP address
+  as part of hosting the upload endpoint, but the extension does not store
+  IP addresses in the `price_history` table.
 - **Payment or financial information** — no card numbers, bank details,
   invoices, or transaction records.
 - **Authentication data** — no passwords, cookies, session tokens, or
   login state.
-- **Browsing history outside the supported sites** — the extension has
-  zero access to URLs or content on any other domain.
+- **Browsing history outside the supported sites** — product observations
+  are recorded and uploaded only for supported store pages. URL-change
+  events outside the supported domains may be visible to the service worker
+  through the `tabs` permission, but they are discarded and never stored or
+  uploaded.
 - **Page content beyond product details** — no reviews, comments,
   account dashboards, cart contents, or order history.
-- **Cross-site tracking** — no analytics SDK, no third-party tags, no
-  fingerprinting beyond the random pseudonymous device ID.
+- **Cross-site tracking** — no analytics SDK, no third-party tags, and no
+  active browser fingerprinting. Uploaded rows do include the full
+  user-agent string listed above and the random pseudonymous device ID.
 
 ## How to delete your data
 

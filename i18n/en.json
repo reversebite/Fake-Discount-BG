@@ -31,7 +31,8 @@
     "allTimeLow": "All-time Low",
     "averagePrice": "Average Price",
     "allTimeHigh": "All-time High",
-    "emptyState": "Starting to track this product. Check back in 24h for history."
+    "emptyState": "Starting to track this product. Check back in 24h for history.",
+    "notAvailable": "N/A"
   },
   "bottomBar": {
     "days": "days",
@@ -44,15 +45,13 @@
   },
   "reasons": {
     "priceHigherThanMax": "The claimed \"original\" price ({originalPrice}) is {percentage}% higher than the highest price we've observed ({maxPrice}) across {observations} observations ({days} days of tracking) — the discount may be misleading.",
-    "priceHigherThanAverage": "The \"original\" price is {percentage}% above the average price for the period.",
-    "priceHigherThan30DayLow": "Current price ({currentPrice}) is {percentage}% above the lowest price in the last 30 days ({minPrice}) based on {observations} observations.",
-    "priceRecentlyIncreased": "The price was raised shortly before the announced discount.",
-    "legitimateDiscount": "The discount matches historical price patterns.",
+    "priceHigherThan30DayLow": "Current price ({currentPrice}) is {percentage}% above the lowest price in the last 30 days ({minPrice}) based on {observations} observations ({days} days of tracking).",
     "belowAverage": "Current price ({currentPrice}) is {percentage}% below the average ({avgPrice}) across {observations} observations ({days} days of tracking).",
     "atAllTimeLow": "Current price ({currentPrice}) is at or near the lowest we've observed ({minPrice}) across {observations} observations ({days} days of tracking) — a genuinely good offer.",
-    "stablePrice": "Price has remained stable through the last 30 days based on {observations} observations.",
+    "stablePrice": "Price has remained stable through the last 30 days based on {observations} observations ({days} days of tracking).",
     "volatilePrice": "Price has varied by {percentage}% across {observations} observations ({days} days of tracking) — it may be worth waiting for a better offer.",
-    "insufficientData": "At least {needed} days of history needed for a reliable verdict ({current}/{needed} available so far)."
+    "insufficientData": "At least {needed} price observations needed for a reliable verdict ({current}/{needed} so far).",
+    "noPatternMatch": "Price is being tracked ({observations} observations over {days} days) but no discount pattern matched yet."
   },
   "settings": {
     "title": "Settings",
@@ -100,7 +99,7 @@
     "enableSopharmacyDesc": "Records price history every time you open a product on Sopharmacy.bg.",
     "enableSportdepotDesc": "Records price history every time you open a product on Sportdepot.bg.",
     "enableEbagDesc": "Records price history every time you open a product on eBag.bg.",
-    "showWidgetDesc": "Displays the chart directly on the product page. When off, prices are still tracked silently in the background — the chart just won't appear.",
+    "showWidgetDesc": "Displays the chart directly on the product page. When off, prices are still tracked silently in the background and uploaded to the shared dataset — the chart just won't appear.",
     "trackedProducts": "Tracked products",
     "followedProducts": "Followed Products",
     "noProducts": "No followed products",
@@ -167,6 +166,10 @@
     "clearFailed": "Error clearing history",
     "exportFailed": "Error exporting data",
     "importFailed": "Error importing data",
-    "invalidFile": "Invalid file format"
+    "invalidFile": "Invalid file format",
+    "chartRenderFailed": "Error rendering chart"
+  },
+  "data": {
+    "importSummary": "{imported} imported, {skipped} skipped as invalid"
   }
 }

@@ -101,12 +101,24 @@ const ContentScriptBase = {
         });
     },
 
+    // Returns true unless the user explicitly disabled this store in Settings.
+    async checkSiteEnabled(storageKey) {
+        if (!this.isContextValid()) return false;
+        const result = await chrome.storage.local.get([storageKey]);
+        return result[storageKey] !== false;
+    },
+
     // Generic track and display flow
-    async trackAndDisplay(extractProductData, injectWidget, isProductPage) {
+    async trackAndDisplay(extractProductData, injectWidget, isProductPage, options = {}) {
         // Bail out if the extension was reloaded while this page was open —
         // any chrome.* call from this orphaned script would otherwise reject
         // with "Extension context invalidated".
         if (!this.isContextValid()) return;
+
+        if (options.enableStorageKey) {
+            const enabled = await this.checkSiteEnabled(options.enableStorageKey);
+            if (!enabled) return;
+        }
 
         const productData = await extractProductData();
 
@@ -125,15 +137,22 @@ const ContentScriptBase = {
         };
 
         if (!productData || !productData.price) {
-            await injectWidget(
-                {
-                    history: [],
-                    title: 'Unknown Product',
-                    url: window.location.href,
-                    site: productData && productData.site ? productData.site : undefined
-                },
-                emptyAnalysis
-            );
+            const oosProduct = {
+                history: [],
+                url: window.location.href,
+                site: productData && productData.site ? productData.site : undefined
+            };
+            if (productData) {
+                if (productData.id) oosProduct.id = productData.id;
+                if (productData.title) oosProduct.title = productData.title;
+                if (productData.thumbnail) oosProduct.thumbnail = productData.thumbnail;
+                if (productData.ean) oosProduct.ean = productData.ean;
+                if (productData.originalPrice != null) oosProduct.originalPrice = productData.originalPrice;
+            }
+            if (!oosProduct.title) {
+                oosProduct.title = document.querySelector('h1')?.textContent?.trim() || document.title || '';
+            }
+            await injectWidget(oosProduct, emptyAnalysis);
             return;
         }
 
@@ -142,33 +161,73 @@ const ContentScriptBase = {
             if (response && response.success) {
                 await injectWidget(response.product, response.analysis);
             } else {
-                await injectWidget({ history: [], site: productData.site }, emptyAnalysis);
+                await injectWidget({
+                    history: [],
+                    site: productData.site,
+                    title: productData.title,
+                    url: productData.url,
+                    id: productData.id
+                }, emptyAnalysis);
             }
         } catch (error) {
-            await injectWidget({ history: [], site: productData.site }, emptyAnalysis);
+            await injectWidget({
+                history: [],
+                site: productData.site,
+                title: productData.title,
+                url: productData.url,
+                id: productData.id
+            }, emptyAnalysis);
         }
     },
 
     // Setup SPA navigation detection via background messages and popstate
-    setupNavigation(isProductPage, trackAndDisplay) {
+    setupNavigation(isProductPage, trackAndDisplay, options = {}) {
+        const navDelayMs = options.navigationDelayMs || 800;
+        const navigationMaxWaitMs = options.navigationMaxWaitMs || navDelayMs * 4;
         let lastUrl = location.href;
         let navigationTimeout = null;
+        let navigationInterval = null;
+
+        const clearNavigationPoll = () => {
+            if (navigationTimeout) {
+                clearTimeout(navigationTimeout);
+                navigationTimeout = null;
+            }
+            if (navigationInterval) {
+                clearInterval(navigationInterval);
+                navigationInterval = null;
+            }
+        };
 
         const handleUrlChange = () => {
             const url = location.href;
             if (url !== lastUrl) {
                 lastUrl = url;
                 this.cleanupWidget();
+                clearNavigationPoll();
 
-                if (navigationTimeout) {
-                    clearTimeout(navigationTimeout);
-                }
+                const pollStart = Date.now();
 
-                navigationTimeout = setTimeout(async () => {
+                const tryTrack = () => {
                     if (isProductPage()) {
+                        clearNavigationPoll();
                         trackAndDisplay();
+                        return true;
                     }
-                }, 800);
+                    return false;
+                };
+
+                navigationTimeout = setTimeout(() => {
+                    navigationTimeout = null;
+                    if (tryTrack()) return;
+
+                    navigationInterval = setInterval(() => {
+                        if (tryTrack()) return;
+                        if (Date.now() - pollStart >= navigationMaxWaitMs) {
+                            clearNavigationPoll();
+                        }
+                    }, 250);
+                }, navDelayMs);
             }
         };
 

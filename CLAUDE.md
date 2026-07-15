@@ -110,9 +110,9 @@ take the higher bump (one MINOR absorbs any number of patches inside it).
   a capture-phase listener will swallow events before they reach the widget's
   own input/button — this bug has been here before, don't reintroduce it. See
   the comment around the listener loop in `ui/price-graph-widget.js`.
-- **Per-product write queue.** `PriceStorageManager.saveProduct` serializes
-  writes per key via `_writeQueue`. Don't bypass it — concurrent saves to the
-  same product can race.
+- **Per-product write queue.** `PriceStorageManager.saveProduct` and
+  `deleteProduct` serialize writes per key via `_writeQueue`. Don't bypass
+  it — concurrent saves/deletes to the same product can race.
 - **Notino price source: visible DOM, not JSON-LD.** Notino's `application/
   ld+json` Product block frequently contains the *promo-code-applied* price
   (e.g. with the "COMBI" code), not what a regular visitor pays. Always read
@@ -275,13 +275,15 @@ take the higher bump (one MINOR absorbs any number of patches inside it).
   authoritative claim. Keeping these placeholders in the i18n strings keeps
   the verdict honest about its evidence base. New reasons that compare
   against history-derived stats SHOULD include both placeholders; reasons
-  that don't (`insufficientData`, `legitimateDiscount`) don't need them.
+  that don't (`insufficientData`, `noPatternMatch`, `legitimateDiscount`)
+  use `{current}/{needed}` or `{observations}/{days}` as appropriate.
 - **Verdict cascade in `detectFakeDiscount` is order-sensitive — don't
   reorder casually.** The order is: FAKE_DISCOUNT (claimed-original > 1.2×
   all-time-high) → FAKE_DISCOUNT (current > 1.1× 30-day-low) → REAL_DEAL
   (current ≤ 1.05× all-time-low) → VOLATILE_PRICE (30-day range ≥ 8% of avg)
   → STABLE_PRICE (current within 10% of avg AND range < 8%) → REAL_DEAL
-  (current < 0.9× avg, only when no claimed-original) → TRACKING (default).
+  (current < 0.9× avg, only when no claimed-original) → TRACKING default
+  (`insufficientData` when history.length < 7, else `noPatternMatch`).
   REAL_DEAL beats VOLATILE intentionally — "near all-time low" is a more
   actionable buy-now signal than "prices bounce around." VOLATILE beats
   STABLE intentionally — STABLE used to fire on wide-range histories whose
@@ -363,13 +365,10 @@ take the higher bump (one MINOR absorbs any number of patches inside it).
   by another `http(s)://`. Prefer the in-page gallery `<img>` src first;
   fall back to the cleaned `og:image` only if no gallery image is present.
 - **Zora price is `<meta itemprop="price">` (server-rendered EUR), NOT the
-  visible `.price-new-js` spans.** Zora runs on CloudCart; the visible
-  price spans are empty until a jQuery `load`-handler hydrates them. The
-  microdata `<meta itemprop="price">` + `<meta itemprop="priceCurrency"
-  content="EUR">` ARE server-rendered and reliable — that's the primary
-  price source. Read the visible-DOM `.price-old-js` only AFTER hydration
-  for the optional was-price; the placeholder is `<i>0.00</i>` on
-  full-price products, so accept only when value > 0 AND > current price.
+  visible `.price-new-js` spans.** … Was-price: parse `cc_page_data` from
+  **inline `<script>` text** (`cc_page_data = {...}`) — NOT `typeof
+  cc_page_data` (MV3 isolated world cannot see page globals). Fall back to
+  hydrated `.price-old-js` when > 0.
   OOS is signalled by `<link itemprop="availability" href=".../OutOfStock">`
   microdata ONLY — `<span class="_product-out-of-stock">` is a hidden
   template present on every product page (parent `out-of-stock-js hide`)
@@ -382,14 +381,15 @@ take the higher bump (one MINOR absorbs any number of patches inside it).
   `.price.price--discount.price--euro` (sale variant) → `.price.price--euro`
   (regular variant). Old/struck price uses `.price--old.price--euro`.
 - **Praktiker JSON-LD `availability` is unreliable for OOS — also check
-  the visible "Провери наличност" CTA.** Praktiker reports
-  `availability: InStock` even on online-OOS items where the buy button
-  has been swapped for a "check in stores" link. The adapter walks
-  buttons/links looking for visible text matching `^Провери\s*наличност`
-  and treats that as OOS (sets `price=null`).
-- **Ardes "Marketplace seller" = JSON-LD InStock + buy button hidden,
-  same as Praktiker.** Same DOM-text-check pattern applies if the
-  built-in OOS guard ever fails.
+  the visible `.pdp__status` text.** Praktiker reports
+  `availability: InStock` even on online-OOS items. The adapter reads
+  `.pdp__status` for "изчерпан" / out-of-stock wording (do **not** use the
+  generic "Провери наличност" check-in-stores CTA — it appears on every
+  product page and would mark all products OOS).
+- **Ardes "Marketplace seller" = JSON-LD InStock + buy button disabled/hidden
+  + availability strip signals online unavailability.** When the buy CTA is
+  disabled or hidden AND `.availability-check` text contains изчерпан /
+  недостъпен / не е наличен, treat as OOS (`price=null`).
 - **About You and Answear are React SPAs — wait long, prefer data-testid
   hooks over hashed CSS classes.** Both ship with Webpack-hashed class
   names (e.g., `ProductCardStylesProvider__priceRegularMinimalLabel__Ta4Ri`)
@@ -404,6 +404,8 @@ take the higher bump (one MINOR absorbs any number of patches inside it).
   waits 2.5s for hydration, prefers `meta[itemprop="price"]` (often
   emitted post-mount), then falls back to scanning visible "X,XX €"
   tokens inside `[data-dmid="product-detail"]` / `[class*="ProductDetail"]`.
+  Read `originalPrice` only from that same product-detail region (`[class*="oldPrice"]`,
+  `[class*="rrp"]`, `[data-dmid*="rrp"]`) — never bare page-wide `s, del`.
   This is a best-effort adapter; if it breaks on a real product page,
   capture the live HTML and tighten the selectors.
 - **Obuvki EAN comes from the URL slug.** Product URLs always end in
@@ -418,6 +420,18 @@ take the higher bump (one MINOR absorbs any number of patches inside it).
   / `.old-price__value` instead. The 30-day reference is a regulatory
   display required by the Omnibus Directive — useful for users to
   see, useless as a "was X" comparison.
+- **Fashion Days `data-rrp-price` sits on a sibling `.discount-icon`,
+  not on `.rrp-price`.** Pepe-style markup puts split decimals in
+  direct text + `<i class="price__decimals">` without a `.primary`
+  child — `readRrpPrice()` must resolve `[data-rrp-price]` from
+  `.rrp-wrapper` and split text-node + `<i>` before `textContent`
+  fallback (which concatenates `78`+`99` → `7899`).
+- **Mr-Bricolage `.product__prices-block--euro` can show BGN, not
+  EUR.** On some PDPs the plain `.product__prices-block` (no `--euro`)
+  holds the EUR was-price (e.g. `204,51 €`) while `--euro` shows
+  manufacturer BGN (`399,99 ЛВ.`). Read `.product__price--old` from
+  blocks whose text contains `€`; never trust the `--euro` class name
+  alone (`content/bricolage.js`).
 - **Never use `url(#gradientId)` fragment refs for SVG fills.** The
   chart `drawArea` previously filled the area-under-the-line with
   `fill="url(#areaGradient-...)"`. Some host pages — confirmed on
@@ -459,9 +473,9 @@ take the higher bump (one MINOR absorbs any number of patches inside it).
 - `background/service-worker.js` — message router, badge management
 - `background/price-tracker.js` — `detectFakeDiscount()` verdict logic
 - `utils/storage.js` — `PriceStorageManager` (per-product keys, write queue)
-- `utils/supabase-sync.js` — opt-in best-effort cloud sync (disabled until
-  `SUPABASE_URL` + `SUPABASE_ANON_KEY` are filled in; see §6 convention)
-- `content/{emag,ozone,notino,technopolis,technomarket,zora,ardes,plesio,aboutyou,answear,decathlon,dm,fashiondays,lilly,bricolage,obuvki,praktiker,sopharmacy,sportdepot}.js` — site-specific price extraction + widget injection
+- `utils/supabase-sync.js` — enabled best-effort cloud sync in the public
+  build (`SUPABASE_URL` + `SUPABASE_ANON_KEY` populated; see §6 convention)
+- `content/{emag,ozone,notino,technopolis,technomarket,zora,ardes,plesio,aboutyou,answear,decathlon,dm,fashiondays,lilly,bricolage,obuvki,praktiker,sopharmacy,sportdepot,ebag}.js` — site-specific price extraction + widget injection
 - `content/content-base.js` — shared SPA navigation listener, widget loader
 - `content/product-parser.js` — `ProductParser` (URL → ID, price text → number)
 - `ui/price-graph-widget.js` — `FakeDiscountWidget.init()` and target-price logic
