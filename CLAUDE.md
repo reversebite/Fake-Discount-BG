@@ -231,7 +231,16 @@ take the higher bump (one MINOR absorbs any number of patches inside it).
   from `background/service-worker.js` `handleProductTracking`. Forks that
   want a local-only build should blank both constants AND remove the
   Supabase host from `manifest.json` `host_permissions`.
-- **Supabase upsert needs BOTH the `?on_conflict=...` query param AND the
+- **The current direct Supabase upsert is NOT production-safe.** Its anon key
+  is bundled by design. The allow-all `SELECT` policy makes uploaded rows
+  publicly readable; the allow-all `UPDATE` policy becomes publicly mutable
+  once the missing anon table grant is added to make fresh-project upserts
+  work. A read-only
+  production probe on 2026-07-15 confirmed that the anon endpoint returned a
+  row. Before public release, route observations through a narrowly validated
+  RPC / Edge Function (or another controlled ingestion service) and revoke
+  direct anon table access. Keep local saving independent of network success.
+- **While the legacy direct upsert remains, it needs BOTH the `?on_conflict=...` query param AND the
   `Prefer: resolution=merge-duplicates` header.** The header alone defaults
   the conflict target to the primary key (`id`, a bigserial that never
   conflicts), which makes PostgREST do a plain INSERT that then bounces off
@@ -240,11 +249,10 @@ take the higher bump (one MINOR absorbs any number of patches inside it).
   fetch in `utils/supabase-sync.js` for the canonical form. Related trap:
   Supabase's "violates row-level security policy" error (42501) covers BOTH
   "policy denied" and "no policy exists for this operation type at all" —
-  during upsert setup you need INSERT, UPDATE, *and* SELECT policies +
+  during direct-upsert setup you need INSERT, UPDATE, *and* SELECT policies +
   grants for `anon`, even though the operation looks INSERT-only on the
-  surface. Tables created via the SQL Editor (vs the Table Editor UI) do
-  NOT auto-grant privileges to `anon`/`authenticated` — explicit `grant`
-  statements are required.
+  surface. This explains the legacy configuration; it is also why that design
+  must not be used for the production shared dataset.
 - **Supabase Data API default-grant change (2026-05-30 / 2026-10-30).**
   Per a 2026-05 Supabase email: from 2026-05-30, NEW projects stop
   auto-exposing `public` tables to the Data API (PostgREST / supabase-js /

@@ -1,13 +1,13 @@
 # Privacy Policy — Fake Discount Bulgaria
 
-**Last updated:** 30 June 2026
+**Last updated:** 15 July 2026
 
 ## Summary
 
-Fake Discount Bulgaria is a browser extension that detects fake discounts
-on 20 Bulgarian e-commerce sites by recording the prices of products you
-visit. Most data stays in your browser. **A short, pseudonymous record of
-each product observation is also uploaded to a developer-controlled
+Fake Discount Bulgaria is a browser extension that shows history-based price
+signals on 20 Bulgarian e-commerce sites by recording the prices of products you
+visit. Local history remains the source used by the extension, and **a
+pseudonymous copy of each recorded daily product observation is uploaded to a developer-controlled
 Postgres database (Supabase)** so the extension can build a shared
 price-history dataset across all installs.
 
@@ -60,22 +60,23 @@ content scripts are injected once per document lifecycle), not instantly
 on tabs that are already open when you flip the toggle.
 
 This local data is used to build a price history for each product, to
-detect whether a displayed discount is genuine, and to render the
+calculate heuristic deal signals, and to render the
 price-graph widget on product pages.
 
 ## What is uploaded to Supabase
 
-In addition to the local copy, every recorded price observation is sent
-to a Postgres database hosted on Supabase, operated by the developer of
-this extension. The upload is fire-and-forget and never blocks the local
-save or widget render. Each upload contains:
+In addition to the local copy, the extension attempts a best-effort upload of
+each recorded daily price snapshot to a Postgres database hosted on Supabase,
+operated by the developer of this extension. The upload is fire-and-forget,
+has no durable retry queue, and never blocks the local save or widget render.
+Offline or interrupted uploads can therefore be missing remotely. Each upload contains:
 
 | Field | Example | Purpose |
 |---|---|---|
 | `device_id` | random UUID v4 | Deduplicate observations from the same install. Not linked to your identity. |
-| `product_id` | `emag_DKFWLW3BM` | Extension-internal stable identifier derived from the URL. |
+| `product_id` | `emag_DKFWLW3BM` | Extension-internal identifier derived from the URL. |
 | `site` | `emag` | Which store the observation comes from. |
-| `url` | `https://www.emag.bg/...` | The product page URL you visited. |
+| `url` | `https://www.emag.bg/...` | The full product page URL as visited, including query parameters or a fragment when present. |
 | `title` | `Smartphone Samsung Galaxy S25 FE` | The product name. |
 | `thumbnail` | `https://cdn.emag.bg/...jpg` | The product image URL. |
 | `ean` | `8806097540519` | The EAN/GTIN barcode when the page exposes one. |
@@ -84,7 +85,7 @@ save or widget render. Each upload contains:
 | `discount` | `17` | Percentage difference between the two. |
 | `observed_date` | `2026-05-14` | Date of the observation (local time). |
 | `observed_at` | server timestamp | Supabase/Postgres timestamp for when the upload was received. |
-| `ext_version` | `3.16.3` | Extension version that recorded the observation. |
+| `ext_version` | `3.16.4` | Extension version that recorded the observation. |
 | `user_agent` | full browser UA string | Browser/OS identification, for debugging extraction issues. |
 
 The upload is keyed by `(device_id, product_id, observed_date)` — only
@@ -102,9 +103,18 @@ The dataset is used by the developer to:
 - Aggregate observed prices for future features such as cross-install
   price-history sharing or community-wide fake-discount detection.
 
-The dataset is not sold, not shared with advertising networks, and not
-used for targeted advertising. The developer has access to it for
-maintenance and feature development.
+The developer does not sell the dataset, provide it to advertising networks,
+or use it for targeted advertising. The production Supabase endpoint currently
+allows a query made with the public anon key bundled in the extension to read
+rows from `price_history`. Uploaded rows must therefore not be treated as
+private to the developer. The documented database recipe also defines an
+allow-all anon update policy but omits the table grant needed for the extension
+upsert: as written, fresh writes fail; adding the missing grant would let any
+anon-key holder update arbitrary rows. Direct table access must be replaced by
+a controlled write path before public release.
+
+Uploaded rows currently have no automatic expiration and are retained until
+the developer removes them or the database policy changes.
 
 There is **no in-extension toggle** to disable cloud uploads in the
 public build. Forks can blank the Supabase constants in
@@ -128,17 +138,21 @@ public build. Forks can blank the Supabase constants in
   uploaded.
 - **Page content beyond product details** — no reviews, comments,
   account dashboards, cart contents, or order history.
-- **Cross-site tracking** — no analytics SDK, no third-party tags, and no
-  active browser fingerprinting. Uploaded rows do include the full
-  user-agent string listed above and the random pseudonymous device ID.
+- **Advertising trackers or active fingerprinting** — there is no analytics
+  SDK or third-party advertising tag. However, the same random pseudonymous
+  device ID is used for observations across all enabled supported stores, so
+  those retailer visits are linkable to one extension installation. Uploaded
+  rows also include the full user-agent string listed above.
 
 ## How to delete your data
 
 **Local data:**
 
-- Open the popup → **Data** tab → **"Clear all history"** to wipe every
-  product stored on your computer.
-- **"Cleanup old"** removes entries older than 90 days.
+- Open the popup → **Data** tab → **"Clear all history"** to remove indexed
+  product records. A known race with simultaneous page tracking can leave an
+  orphaned storage key; close supported product tabs and repeat if storage
+  usage does not fall as expected.
+- **"Cleanup old"** removes whole products not seen for at least 90 days.
 - Uninstalling the extension from `chrome://extensions/` removes all
   local data.
 
@@ -150,19 +164,27 @@ belong to you without you sending the device ID first. To request
 removal of uploaded observations from your install, email the contact
 address below and include your device ID (find it in your browser's
 DevTools console under `chrome.storage.local` → `supabase_device_id`).
+Concurrent first-run uploads can currently generate a transient second device
+ID before one is persisted. Rows written under that lost ID cannot be located
+from the retained ID; this must be fixed before public release.
 
 ## Export and import
 
-The extension lets you export your locally stored data as a JSON file
-(a manual local backup) and import it later. These backup files are
+The extension lets you export locally stored price-history product records as
+a JSON file (a manual local backup) and import them later. Settings, price
+targets, popup filters, and the Supabase device ID are not included. These backup files are
 created and read only on your computer, by your own action; they are
 never uploaded anywhere by the extension.
 
-On import, the extension validates that every product URL belongs to
-one of the 20 supported store domains and that thumbnail URLs use
-`https://`. Entries that fail these checks are silently dropped to
-prevent malicious or corrupted backup files from injecting unsafe
-navigation targets or remote-content loads into the popup.
+On import, the extension validates that every product URL belongs to one of
+the 20 supported store domains and accepts thumbnail URLs only when they are
+syntactically valid `https://` URLs. Any HTTPS host is allowed, and the popup
+will request that image when rendering the imported product, so only trusted
+backup files should be imported. Products with invalid store URLs or without
+any valid history row are skipped; a non-HTTPS thumbnail is removed while the
+rest of an otherwise valid product is kept. The importer has no file-size cap,
+is not transactional, and can partially replace existing records before a
+later storage error is reported.
 
 ## Permissions explained
 

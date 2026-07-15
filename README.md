@@ -2,22 +2,26 @@
 
 > Chrome / Edge extension
 
-A Chrome/Edge extension that detects fake discounts on 20 Bulgarian e-commerce sites (Emag.bg, Ozone.bg, Notino.bg, Technopolis.bg, Technomarket.bg, Zora.bg, Ardes.bg, Plesio.bg, Aboutyou.bg, Answear.bg, Decathlon.bg, dm-drogeriemarkt.bg, Fashiondays.bg, Lillydrogerie.bg, Mr-bricolage.bg, Obuvki.bg, Praktiker.bg, Sopharmacy.bg, Sportdepot.bg, eBag.bg) by automatically tracking price history and displaying integrated price graphs on product pages.
+A Manifest V3 Chrome/Edge extension with adapters for 20 Bulgarian e-commerce sites (Emag.bg, Ozone.bg, Notino.bg, Technopolis.bg, Technomarket.bg, Zora.bg, Ardes.bg, Plesio.bg, Aboutyou.bg, Answear.bg, Decathlon.bg, dm-drogeriemarkt.bg, Fashiondays.bg, Lillydrogerie.bg, Mr-bricolage.bg, Obuvki.bg, Praktiker.bg, Sopharmacy.bg, Sportdepot.bg, eBag.bg). It records a daily EUR price snapshot when you visit a supported, enabled product page and renders local price-history charts plus heuristic deal signals directly on the page.
+
+> **Pre-release status:** the 15 July 2026 audit found public Supabase access,
+> adapter correctness bugs, and reproduced storage/import races that must be
+> fixed before distribution. See [composer 2.5 multi agent audit.md](composer%202.5%20multi%20agent%20audit.md).
 
 **Repository:** https://github.com/victortserovski/Fake-Discount-BG
 **Privacy policy:** [PRIVACY.md](PRIVACY.md)
 
 ## Features
 
-- **Automatic Tracking**: All products you visit are automatically tracked (no manual watchlist needed)
-- **Integrated Display**: Price graph and discount analysis displayed directly on product pages
-- **Verdict System**: Shows "Fake discount", "Real deal", "Volatile price", "Stable price", or "Tracking" (when there isn't enough data yet) with reason text
+- **Visit-triggered Tracking**: A valid purchasable price is recorded automatically when you visit an enabled, supported product page (no manual watchlist needed; one local snapshot per product per day)
+- **Integrated Display**: Price graph and history-based deal analysis displayed directly on product pages
+- **Verdict System**: Shows the heuristic states "Fake discount", "Real deal", "Volatile price", "Stable price", or "Tracking" with the observations behind the result
 - **Extension Badge**: Per-tab icon badge — "!" for fake discounts, "✓" for real deals, 🎯 when a price target is hit (target badge overrides the verdict badge on that tab)
-- **Price Targets**: Set a target on any product; the chart shows a purple horizontal line at your target, the popup marks products with active targets, and a green pulsing pill appears when the target is reached
+- **Price Targets**: Set a target on any product; the chart shows a horizontal target line, the popup marks active targets, and the current tab badge/pill changes when a visited price reaches the target. There is no background polling or browser notification.
 - **Clickable Product List**: Click any product in the popup to open its page
 - **Bilingual Support**: Bulgarian (default) and English, with localized date formatting in the chart
-- **Export/Import**: Back up and restore your price history data as JSON (validated and sanitized on import)
-- **EAN/GTIN tracking**: When a product's barcode is exposed it's stored alongside the price history for future cross-site price matching. Click an EAN in the popup to copy it to the clipboard. Coverage by site (based on a full audit of saved samples): consistent — **Notino, Obuvki, Zora, dm-drogeriemarkt**; occasional — **Praktiker, Mr.Bricolage** (barcode appears in the product description text on some products); none exposed in saved samples — Emag, Ozone, Ardes, Plesio, Technopolis, Technomarket, Aboutyou, Answear, Decathlon, Fashion Days, Lillydrogerie, Sopharmacy, Sportdepot, eBag.
+- **Export/Import**: Export and import price-history product records as JSON with field-level validation (settings and price targets are not included; import is not transactional)
+- **EAN/GTIN tracking**: When a product's barcode is exposed and recognized, it is stored alongside price history and can be searched or copied from the popup. Saved fixtures confirm extraction on **Notino, Obuvki, Zora, dm-drogeriemarkt, and Answear**, with occasional description-based coverage on **Praktiker** and **Mr.Bricolage**. Technomarket fixtures expose EAN attributes that the current generic extractor does not yet read. Cross-store matching is a future feature.
 - **Last-seen indicator**: Each product card shows when it was last refreshed ("updated today / yesterday / N days ago") so stale entries are easy to spot
 - **Keyboard shortcut**: Press `Ctrl+Shift+F` (or `⌘+Shift+F` on Mac) to open the popup. Customisable at `chrome://extensions/shortcuts`
 - **Persisted filters**: Site-filter chips and sort selection survive popup close/reopen (the search box is intentionally cleared each time)
@@ -34,8 +38,8 @@ A Chrome/Edge extension that detects fake discounts on 20 Bulgarian e-commerce s
 
 1. When you visit a product page on any supported site (Emag, Ozone, Notino, Technopolis, Technomarket, Zora, Ardes, Plesio, Aboutyou, Answear, Decathlon, dm-drogeriemarkt, Fashiondays, Lillydrogerie, Mr-bricolage, Obuvki, Praktiker, Sopharmacy, Sportdepot, eBag), the extension automatically:
    - Extracts product information (ID, price, title)
-   - Stores price history in local storage
-   - Analyzes price patterns to detect fake discounts
+   - Stores or updates one local price snapshot for that product and local day
+   - Analyzes local price history for potentially misleading or favorable pricing signals
    - Displays a price graph widget on the product page
 
 2. The extension tracks:
@@ -45,27 +49,28 @@ A Chrome/Edge extension that detects fake discounts on 20 Bulgarian e-commerce s
    - Overall pricing stability/volatility
 
 3. Verdict System:
-   - **FAKE DISCOUNT** (red): High confidence the discount is misleading — claimed "original" price exceeds observed history, or current price is well above the 30-day low
-   - **REAL DEAL** (green): Legitimate discount — price is near or at all-time low, or (when no seller "was" price is shown) materially below the historical average
+   - **FAKE DISCOUNT** (red): A warning signal — the claimed "original" price exceeds observed history, or the current price is well above the 30-day low. The second rule can fire even when no seller discount is shown.
+   - **REAL DEAL** (green): A favorable observed price — near the tracked low, or (when no seller "was" price is shown) materially below the historical average
    - **VOLATILE PRICE** (orange): Price has fluctuated by 8%+ across the last 30 days — wait for a low point
    - **STABLE PRICE** (yellow): Price has been confirmed stable over 7+ price observations AND the 30-day range is tight (< 8% of average)
    - **TRACKING** (gray): Still gathering data — fewer than 7 price observations (`insufficientData` reason), or 7+ observations with no rule matched yet (`noPatternMatch` reason)
 
-   Each verdict's reason text reports how many observations (datapoints) and
-   days of tracking it's based on, so the reader can judge how strong the
-   evidence is. A "fake discount" verdict on a 22-day flat history with a
-   single ПЦД comparison reads differently from a "fake discount" verdict
-   on 90 days of recorded ups and downs — both messages name their evidence.
+   History-based verdict reasons report the relevant observation count and
+   tracked span. The insufficient-data state instead reports progress toward
+   the seven-observation threshold.
 
 ## Storage
 
 - Uses Chrome local storage (limit ~10MB)
 - Per-product keys for O(1) read/write performance
-- Per-product write queue prevents races on rapid page reloads
-- **Full daily price history is kept indefinitely** (no compression) so the
-  fake-discount detector always has accurate original-price comparisons
+- Per-product writes are serialized during ordinary tracking; the current
+  audit found separate migration and clear-all races that still need repair
+- **Recorded daily snapshots are not compressed or automatically evicted.**
+  They remain until manual deletion, extension removal, or Chrome's local
+  storage quota is reached.
 - Storage usage shown with adaptive precision (e.g. "0.03%") in the popup
-- No automatic deletion — only the manual "Cleanup old" button removes products
+- No automatic deletion — products can be removed individually, by the manual
+  90-day cleanup, or with Clear all history
 
 ## Popup
 
@@ -98,8 +103,8 @@ target is set.
 
 **Data tab**
 - Storage usage bar + tracked-product count
-- Export/import data as JSON (imports are validated; malformed entries are skipped)
-- Clean up old entries (90+ days) or clear all history
+- Export/import price-history product records as JSON (settings and price targets are not included; malformed product rows are skipped)
+- Delete products not seen for 90+ days, or clear all indexed history
 
 A persistent footer at the bottom of every tab shows total tracked count and
 storage usage at a glance.
@@ -112,8 +117,7 @@ storage usage at a glance.
 - `ui/` - SVG-based chart rendering (advanced-chart.js) and widget UI (price-graph-widget.js)
 - `i18n/` - Bulgarian and English translation files
 - `popup/` - Extension popup with settings and product list
-- `utils/` - PriceStorageManager with per-product keys and migration support; Supabase cloud-sync utility (enabled in the public build — every recorded observation is uploaded; see [PRIVACY.md](PRIVACY.md))
-- `test/` - Manual test suite (run in browser console)
+- `utils/` - PriceStorageManager with per-product keys and migration support; Supabase best-effort, one-way upload utility (see [PRIVACY.md](PRIVACY.md))
 
 ## Development
 
@@ -123,25 +127,42 @@ The widget UI scripts run in the content script isolated world (not injected int
 
 `utils/supabase-sync.js` ships with populated `SUPABASE_URL` and
 `SUPABASE_ANON_KEY` constants pointing at a developer-controlled
-Supabase project. Every price observation recorded by the extension is
-uploaded fire-and-forget to a `price_history` Postgres table — see
+Supabase project. Each recorded daily snapshot is submitted best-effort,
+one-way to a `price_history` Postgres table — see
 [PRIVACY.md](PRIVACY.md) for the exact field list and how the data is
-used. Local `chrome.storage` remains the source of truth; the network
-push never blocks the widget render. Upload is deduplicated per
+used. The extension does not download that pooled dataset: verdicts and
+charts use local history only. Local `chrome.storage` remains the source
+of truth; the network push never blocks the widget render. Upload is deduplicated per
 `(device_id, product_id, observed_date)` so repeated visits within the
 same day don't bloat the dataset.
 
+The current database policy exposes reads through the bundled public anon
+key. This must be replaced with a controlled write path and direct table
+access must be revoked before public distribution; see the audit report.
+
 Developers cloning this repo for their own fork can blank both constants
-to disable the upload (it then becomes a silent no-op) and follow the
-SQL setup block at the top of the file to wire up a separate project.
+to disable the upload (it then becomes a silent no-op). Do not copy the
+legacy allow-all anon table policies for a production dataset.
 
 ## Notes
 
 - Price history starts accumulating from the first time you visit a product
-- More data = better fake discount detection accuracy (TRACKING with `insufficientData` transitions to a confident verdict or `noPatternMatch` at 7+ price observations)
+- More data gives the heuristic stronger context (`TRACKING` transitions to a
+  history-based state or `noPatternMatch` at 7+ price observations)
 - The extension only tracks products you actually visit (not all products on the site)
-- Product identification uses URL path as primary key
+- Product identification uses site-specific URL-derived keys; EAN/GTIN is
+  captured separately when available
 - All prices are displayed in EUR regardless of language setting
+
+## Not implemented yet
+
+- Cloud history is not read back into verdicts or charts.
+- EAN/GTIN values are searchable and copyable, but products are not yet
+  matched or compared across stores.
+- Price targets are checked when a product is visited; there are no proactive
+  background or operating-system alerts.
+- The tracked repository has no automated test runner. Saved-page replay
+  tools and HTML fixtures are local development material and are gitignored.
 
 ## For developers / AI agents
 
@@ -184,10 +205,10 @@ MIT — see [LICENSE](LICENSE).
 ## Privacy
 
 This extension stores your local price history in your browser, AND
-uploads each recorded observation (product URL, title, EUR price, EAN,
+attempts a best-effort upload of each recorded daily snapshot (product URL, title, EUR price, EAN,
 observation date, plus a random pseudonymous device ID) to a Postgres
-database hosted on Supabase, operated by the developer, so the
-extension can build a shared price-history dataset across installs.
+database hosted on Supabase. The current database-access issue and exact
+field list are disclosed in [PRIVACY.md](PRIVACY.md).
 
 No personally identifiable information, payment data, authentication
 state, or browsing history outside the 20 supported stores is collected.
